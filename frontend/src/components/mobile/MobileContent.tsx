@@ -44,10 +44,10 @@ export const MobileContent = () => {
     }
   };
 
-  const handleAddToQueue = async (videoId: string) => {
-    setAddingId(videoId);
+  const handleAddToQueue = async (track: Track) => {
+    setAddingId(track.videoId);
     try {
-      const response = await api.addToQueue(videoId);
+      const response = await api.addToQueue(track);
       if (response.success) {
         showToast({ message: "已加入播放佇列", type: "success" });
       } else {
@@ -129,7 +129,7 @@ export const MobileContent = () => {
 // COSSUI 風格的搜尋結果卡片
 interface MobileSearchResultCardProps {
   result: Track;
-  onAdd: (videoId: string) => void;
+  onAdd: (track: Track) => void;
   isAdding?: boolean;
 }
 
@@ -154,7 +154,7 @@ const MobileSearchResultCard = ({
           </p>
         </div>
         <Button
-          onClick={() => onAdd(result.videoId)}
+          onClick={() => onAdd(result)}
           disabled={isAdding}
           size="sm"
           className="shrink-0 h-9 px-4 text-sm bg-gradient-to-r from-gray-900 to-gray-700 dark:from-gray-50 dark:to-gray-200 text-white dark:text-gray-900 rounded-[14px] hover:translate-y-0.5 transition-transform duration-200 disabled:opacity-50 disabled:cursor-not-allowed"

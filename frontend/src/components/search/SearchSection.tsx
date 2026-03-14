@@ -6,10 +6,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { usePlayerStore } from "@/stores/playerStore";
 import { api } from "@/services/api";
+import type { Track } from "@/types";
 
 export const SearchSection = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [creatingMixId, setCreatingMixId] = useState<string | null>(null);
 
   const searchResults = usePlayerStore((state) => state.searchResults);
   const setSearchResults = usePlayerStore((state) => state.setSearchResults);
@@ -34,10 +36,10 @@ export const SearchSection = () => {
     }
   };
 
-  const handleAddToQueue = async (videoId: string) => {
-    setAddingId(videoId);
+  const handleAddToQueue = async (track: Track) => {
+    setAddingId(track.videoId);
     try {
-      const response = await api.addToQueue(videoId);
+      const response = await api.addToQueue(track);
       if (response.success) {
         showToast({ message: "已加入播放佇列", type: "success" });
       } else {
@@ -47,6 +49,28 @@ export const SearchSection = () => {
       showToast({ message: "加入發生錯誤", type: "error" });
     } finally {
       setAddingId(null);
+    }
+  };
+
+  const handleCreateMix = async (track: Track) => {
+    setCreatingMixId(track.videoId);
+    try {
+      const response = await api.createMix(track);
+      if (response.success && response.data) {
+        showToast({
+          message: `已創建 Mix，加入 ${response.data.count} 首歌曲`,
+          type: "success",
+        });
+      } else {
+        showToast({
+          message: response.error || "創建 Mix 失敗",
+          type: "error",
+        });
+      }
+    } catch (error) {
+      showToast({ message: "創建 Mix 發生錯誤", type: "error" });
+    } finally {
+      setCreatingMixId(null);
     }
   };
 
@@ -71,15 +95,14 @@ export const SearchSection = () => {
               key={result.videoId}
               result={result}
               onAdd={handleAddToQueue}
+              onCreateMix={handleCreateMix}
               isAdding={addingId === result.videoId}
+              isCreatingMix={creatingMixId === result.videoId}
             />
           ))}
         </div>
       ) : (
-        <Empty
-          title="尚無搜尋結果"
-          description="輸入關鍵字開始搜尋音樂"
-        />
+        <Empty title="尚無搜尋結果" description="輸入關鍵字開始搜尋音樂" />
       )}
     </div>
   );

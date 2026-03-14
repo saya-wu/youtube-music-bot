@@ -20,8 +20,12 @@ export const MobileSearchPage = () => {
   const [isAnimating, setIsAnimating] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const isMobileSearchOpen = usePlayerStore((state) => state.isMobileSearchOpen);
-  const setMobileSearchOpen = usePlayerStore((state) => state.setMobileSearchOpen);
+  const isMobileSearchOpen = usePlayerStore(
+    (state) => state.isMobileSearchOpen,
+  );
+  const setMobileSearchOpen = usePlayerStore(
+    (state) => state.setMobileSearchOpen,
+  );
   const searchResults = usePlayerStore((state) => state.searchResults);
   const setSearchResults = usePlayerStore((state) => state.setSearchResults);
   const { showToast } = useToast();
@@ -67,19 +71,30 @@ export const MobileSearchPage = () => {
     }
   };
 
-  const handleAddToQueue = async (videoId: string) => {
-    setAddingId(videoId);
+  const handleAddToQueue = async (track: Track) => {
+    setAddingId(track.videoId);
+
+    // 設定全域載入狀態
+    usePlayerStore
+      .getState()
+      .setLoadingTrack(true, `正在載入「${track.title}」...`);
+
     try {
-      const response = await api.addToQueue(videoId);
+      const response = await api.addToQueue(track);
       if (response.success) {
         showToast({ message: "已加入播放佇列", type: "success" });
       } else {
         showToast({ message: response.error || "加入失敗", type: "error" });
+        // 加入失敗時清除載入狀態
+        usePlayerStore.getState().setLoadingTrack(false);
       }
     } catch (error) {
       showToast({ message: "加入發生錯誤", type: "error" });
+      // 發生錯誤時清除載入狀態
+      usePlayerStore.getState().setLoadingTrack(false);
     } finally {
       setAddingId(null);
+      // 注意：載入狀態會由 WebSocket 播放事件清除
     }
   };
 
@@ -177,10 +192,7 @@ export const MobileSearchPage = () => {
               ))}
             </div>
           ) : (
-            <Empty
-              title="尚無搜尋結果"
-              description="輸入關鍵字開始搜尋音樂"
-            />
+            <Empty title="尚無搜尋結果" description="輸入關鍵字開始搜尋音樂" />
           )}
         </div>
       </ScrollArea>
@@ -193,7 +205,7 @@ export const MobileSearchPage = () => {
 // COSSUI 風格的搜尋結果卡片
 interface MobileSearchResultCardProps {
   result: Track;
-  onAdd: (videoId: string) => void;
+  onAdd: (track: Track) => void;
   isAdding?: boolean;
 }
 
@@ -218,7 +230,7 @@ const MobileSearchResultCard = ({
           </p>
         </div>
         <Button
-          onClick={() => onAdd(result.videoId)}
+          onClick={() => onAdd(result)}
           disabled={isAdding}
           size="sm"
           className="shrink-0 h-9 px-4 text-sm bg-gradient-to-r from-gray-900 to-gray-700 dark:from-gray-50 dark:to-gray-200 text-white dark:text-gray-900 rounded-[14px] hover:translate-y-0.5 transition-transform duration-200 disabled:opacity-50 disabled:cursor-not-allowed"

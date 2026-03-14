@@ -28,6 +28,8 @@ export const useWebSocket = () => {
           break;
 
         case "now_playing":
+          // 開始播放 → 清除載入狀態
+          usePlayerStore.getState().setLoadingTrack(false);
           updatePlaybackState({
             currentTrack: message.track,
             position: message.position,
@@ -55,6 +57,8 @@ export const useWebSocket = () => {
           break;
 
         case "play":
+          // 開始播放 → 清除載入狀態
+          usePlayerStore.getState().setLoadingTrack(false);
           updatePlaybackState({ isPlaying: true });
           break;
 

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ApiResponse } from "../types/index.ts";
+import type { ApiResponse, Track } from "../types/index.ts";
 import { getMusicService } from "../services/music.service.ts";
 import { getQueueService } from "../services/queue.service.ts";
 
@@ -48,20 +48,20 @@ api.get("/search", async (c) => {
  */
 api.post("/queue", async (c) => {
   try {
-    const body = await c.req.json<{ videoId: string }>();
+    const body = await c.req.json<{ track: Track }>();
 
-    if (!body.videoId) {
+    if (!body.track || !body.track.videoId) {
       return c.json<ApiResponse>(
         {
           success: false,
-          error: "videoId is required",
+          error: "track is required",
         },
         400,
       );
     }
 
     const queueService = getQueueService();
-    await queueService.addToQueue(body.videoId);
+    await queueService.addToQueue(body.track);
 
     return c.json<ApiResponse>({
       success: true,
@@ -74,6 +74,40 @@ api.post("/queue", async (c) => {
         success: false,
         error: "Failed to add to queue",
       },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/mix
+ * 創建混合播放清單
+ */
+api.post("/mix", async (c) => {
+  try {
+    const body = await c.req.json<{ track: Track }>();
+
+    if (!body.track || !body.track.videoId) {
+      return c.json<ApiResponse>(
+        { success: false, error: "track is required" },
+        400,
+      );
+    }
+
+    const queueService = getQueueService();
+    const tracks = await queueService.createMixFromTrack(body.track);
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: {
+        message: `Added ${tracks.length} tracks to queue`,
+        count: tracks.length,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to create mix:", error);
+    return c.json<ApiResponse>(
+      { success: false, error: "Failed to create mix" },
       500,
     );
   }

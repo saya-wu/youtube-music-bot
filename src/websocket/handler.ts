@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import type { WSMessage } from "../types/index.ts";
 import { getQueueService } from "../services/queue.service.ts";
+import { log } from "../utils/logger.ts";
 
 // 所有連接的客戶端
 const clients = new Set<ServerWebSocket<unknown>>();
@@ -10,6 +11,11 @@ const clients = new Set<ServerWebSocket<unknown>>();
  */
 export function broadcast(message: WSMessage): void {
   const data = JSON.stringify(message);
+  log.debug("Broadcasting message", {
+    type: message.type,
+    clientCount: clients.size,
+    dataLength: data.length,
+  });
   for (const client of clients) {
     client.send(data);
   }
@@ -51,16 +57,19 @@ export function handleWebSocketMessage(
           if (Number.isFinite(data.value) && data.value >= 0) {
             queueService.seekTo(data.value);
           } else {
-            console.warn("Invalid seek value received:", data.value);
+            log.warn("Invalid seek value received", { value: data.value });
           }
         }
         break;
 
       default:
-        console.log("Unknown message type:", data.type);
+        log.debug("Unknown message type", { type: data.type });
     }
   } catch (error) {
-    console.error("Failed to handle WebSocket message:", error);
+    log.error("Failed to handle WebSocket message", {
+      error: error instanceof Error ? error.message : String(error),
+      message,
+    });
   }
 }
 
@@ -69,7 +78,7 @@ export function handleWebSocketMessage(
  */
 export function handleWebSocketOpen(ws: ServerWebSocket<unknown>): void {
   clients.add(ws);
-  console.log("WebSocket client connected. Total clients:", clients.size);
+  log.info("WebSocket client connected", { totalClients: clients.size });
 
   // 發送目前播放狀態給新連接的客戶端
   const queueService = getQueueService();
@@ -95,7 +104,9 @@ export function handleWebSocketOpen(ws: ServerWebSocket<unknown>): void {
         );
       })
       .catch((error) => {
-        console.error("Failed to fetch lyrics for new client:", error);
+        log.error("Failed to fetch lyrics for new client", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
   }
 }
@@ -105,7 +116,7 @@ export function handleWebSocketOpen(ws: ServerWebSocket<unknown>): void {
  */
 export function handleWebSocketClose(ws: ServerWebSocket<unknown>): void {
   clients.delete(ws);
-  console.log("WebSocket client disconnected. Total clients:", clients.size);
+  log.info("WebSocket client disconnected", { totalClients: clients.size });
 }
 
 /**
@@ -127,6 +138,12 @@ export function initializeWebSocket(): void {
 
   // 監聽播放狀態變更
   queueService.onStateChange((state) => {
+    log.debug("State change detected", {
+      isPlaying: state.isPlaying,
+      currentTrack: state.currentTrack?.title ?? null,
+      queueLength: state.queue.length,
+    });
+
     broadcast({
       type: "playback_state",
       state,
@@ -145,7 +162,9 @@ export function initializeWebSocket(): void {
           });
         })
         .catch((error) => {
-          console.error("Failed to fetch lyrics on track change:", error);
+          log.error("Failed to fetch lyrics on track change", {
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
     } else if (!currentTrackId) {
       lastTrackId = null;
@@ -160,5 +179,5 @@ export function initializeWebSocket(): void {
     });
   });
 
-  console.log("WebSocket broadcasting initialized");
+  log.info("WebSocket broadcasting initialized");
 }

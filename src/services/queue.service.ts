@@ -115,27 +115,15 @@ class QueueService {
   /**
    * 加入歌曲到播放清單
    */
-  async addToQueue(videoId: string): Promise<void> {
-    const musicService = getMusicService();
+  async addToQueue(track: Track): Promise<void> {
+    // 直接使用前端傳來的 Track，不再重新搜尋
+    this.queue.push(track);
 
-    // 透過搜尋獲取歌曲資訊（使用 videoId 作為搜尋關鍵字）
-    const tracks = await musicService.search(videoId, 1);
-
-    if (tracks.length === 0) {
-      // 如果搜尋不到，建立基本的 Track 物件
-      const track: Track = {
-        videoId,
-        title: "Unknown",
-        artist: "Unknown",
-        duration: 0,
-        thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
-      };
-      this.queue.push(track);
-    } else {
-      this.queue.push(tracks[0]);
-    }
-
-    log.info("Added to queue", { videoId });
+    log.info("Added to queue", {
+      videoId: track.videoId,
+      title: track.title,
+      artist: track.artist,
+    });
     this.broadcastQueueChange();
 
     // 如果目前沒有播放，自動開始播放
@@ -154,6 +142,45 @@ class QueueService {
       log.info("Auto-starting playback for newly added track");
       this.playNext();
     }
+  }
+
+  /**
+   * 創建混合播放清單
+   * 清空佇列，立即開始播放 Mix
+   */
+  async createMixFromTrack(baseTrack: Track): Promise<Track[]> {
+    log.info("Creating mix", { baseTrack: baseTrack.title });
+
+    // 停止當前播放
+    await getPlayerService().stop();
+
+    // 清空佇列
+    this.queue = [];
+    this.currentTrack = null;
+
+    // 先加入基礎歌曲
+    this.queue.push(baseTrack);
+
+    // 嘗試獲取推薦歌曲
+    let mixTracks: Track[] = [];
+    try {
+      mixTracks = await getMusicService().getMixTracks(baseTrack.videoId, 10);
+      if (mixTracks.length > 0) {
+        this.queue.push(...mixTracks);
+      }
+    } catch (error) {
+      log.warn("Failed to get mix tracks, playing base track only", { error });
+    }
+
+    log.info("Mix created, starting playback", {
+      addedTracks: this.queue.length,
+    });
+    this.broadcastQueueChange();
+
+    // 無論是否有推薦歌曲，都開始播放
+    await this.playNext();
+
+    return [baseTrack, ...mixTracks];
   }
 
   /**
@@ -205,12 +232,59 @@ class QueueService {
     this.fetchAndBroadcastLyrics();
 
     try {
-      // 播放
-      await getPlayerService().play(nextTrack.videoId);
-    } catch (error) {
-      log.error("Failed to play track", { error });
-      // 播放失敗，嘗試下一首
-      this.playNext();
+      // 先嘗試獲取串流 URL（優化延遲）
+      log.info("Fetching stream URL", { videoId: nextTrack.videoId });
+      const streamResult = await getMusicService().getStreamUrl(
+        nextTrack.videoId,
+      );
+      log.info("Stream URL obtained", {
+        source: streamResult.source,
+        urlLength: streamResult.url.length,
+        urlPrefix: streamResult.url.substring(0, 50) + "...",
+      });
+      await getPlayerService().playUrl(streamResult.url);
+      log.info("Playback started successfully via stream URL");
+    } catch (streamError) {
+      // Fallback：使用原始 play() 讓 mpv 透過 yt-dlp 解析
+      log.warn("Stream URL extraction failed, falling back to yt-dlp", {
+        error:
+          streamError instanceof Error
+            ? streamError.message
+            : String(streamError),
+        stack: streamError instanceof Error ? streamError.stack : undefined,
+        videoId: nextTrack.videoId,
+      });
+
+      try {
+        log.info("Attempting fallback play via yt-dlp", {
+          videoId: nextTrack.videoId,
+        });
+        await getPlayerService().play(nextTrack.videoId);
+        log.info("Fallback play succeeded");
+      } catch (fallbackError) {
+        log.error("Both stream URL and fallback play failed", {
+          streamError:
+            streamError instanceof Error
+              ? streamError.message
+              : String(streamError),
+          fallbackError:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+          videoId: nextTrack.videoId,
+          trackTitle: nextTrack.title,
+        });
+
+        // 重置狀態，通知前端
+        this.currentTrack = null;
+        this.isPaused = false;
+        this.broadcastState();
+
+        // 拋出錯誤，讓調用者知道播放失敗
+        throw new Error(
+          `Failed to play track: ${nextTrack.title}. Error: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+        );
+      }
     }
   }
 
@@ -247,7 +321,7 @@ class QueueService {
   seekTo(position: number): void {
     // 驗證輸入和邊界
     if (!Number.isFinite(position) || position < 0) {
-      console.warn("Invalid seek position:", position);
+      log.warn("Invalid seek position", { position });
       return;
     }
 

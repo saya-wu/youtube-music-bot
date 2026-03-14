@@ -16,6 +16,11 @@ interface PlayerStore {
   setPlaybackState: (state: PlaybackState) => void;
   updatePlaybackState: (partial: Partial<PlaybackState>) => void;
 
+  // 載入狀態
+  isLoadingTrack: boolean;
+  loadingMessage: string | null;
+  setLoadingTrack: (loading: boolean, message?: string) => void;
+
   // 歌詞
   lyrics: LyricLine[];
   setLyrics: (lyrics: LyricLine[]) => void;
@@ -53,6 +58,23 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
     set((state) => ({
       playbackState: { ...state.playbackState, ...partial },
     })),
+
+  // 載入狀態
+  isLoadingTrack: false,
+  loadingMessage: null,
+  setLoadingTrack: (loading, message) => {
+    set({ isLoadingTrack: loading, loadingMessage: message || null });
+
+    // 如果開始載入，設定 10 秒超時自動清除
+    if (loading) {
+      setTimeout(() => {
+        // 如果 10 秒後仍在載入，自動清除
+        if (usePlayerStore.getState().isLoadingTrack) {
+          set({ isLoadingTrack: false, loadingMessage: null });
+        }
+      }, 10000);
+    }
+  },
 
   // 歌詞
   lyrics: [],

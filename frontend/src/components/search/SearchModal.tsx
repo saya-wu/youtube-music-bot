@@ -13,6 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/components/ui/toast";
 import { usePlayerStore } from "@/stores/playerStore";
 import { api } from "@/services/api";
+import type { Track } from "@/types";
 
 interface SearchModalProps {
   open: boolean;
@@ -22,6 +23,7 @@ interface SearchModalProps {
 export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
   const [isSearching, setIsSearching] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [creatingMixId, setCreatingMixId] = useState<string | null>(null);
 
   const searchResults = usePlayerStore((state) => state.searchResults);
   const setSearchResults = usePlayerStore((state) => state.setSearchResults);
@@ -46,20 +48,58 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
     }
   };
 
-  const handleAddToQueue = async (videoId: string) => {
-    setAddingId(videoId);
+  const handleAddToQueue = async (track: Track) => {
+    setAddingId(track.videoId);
+
+    // 設定全域載入狀態
+    usePlayerStore
+      .getState()
+      .setLoadingTrack(true, `正在載入「${track.title}」...`);
+
     try {
-      const response = await api.addToQueue(videoId);
+      const response = await api.addToQueue(track);
       if (response.success) {
         showToast({ message: "已加入播放佇列", type: "success" });
         // 保持 Modal 開啟，不調用 onOpenChange(false)
       } else {
         showToast({ message: response.error || "加入失敗", type: "error" });
+        // 加入失敗時清除載入狀態
+        usePlayerStore.getState().setLoadingTrack(false);
       }
     } catch (error) {
       showToast({ message: "加入發生錯誤", type: "error" });
+      // 發生錯誤時清除載入狀態
+      usePlayerStore.getState().setLoadingTrack(false);
     } finally {
       setAddingId(null);
+      // 注意：載入狀態會由 WebSocket 播放事件清除
+    }
+  };
+
+  const handleCreateMix = async (track: Track) => {
+    setCreatingMixId(track.videoId);
+    usePlayerStore.getState().setLoadingTrack(true, "正在取得推薦歌曲...");
+
+    try {
+      const response = await api.createMix(track);
+      if (response.success && response.data) {
+        showToast({
+          message: `已創建 Mix，加入 ${response.data.count} 首歌曲`,
+          type: "success",
+        });
+        onOpenChange(false);
+      } else {
+        showToast({
+          message: response.error || "創建 Mix 失敗",
+          type: "error",
+        });
+        usePlayerStore.getState().setLoadingTrack(false);
+      }
+    } catch (error) {
+      showToast({ message: "創建 Mix 發生錯誤", type: "error" });
+      usePlayerStore.getState().setLoadingTrack(false);
+    } finally {
+      setCreatingMixId(null);
     }
   };
 
@@ -85,7 +125,9 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
                     key={result.videoId}
                     result={result}
                     onAdd={handleAddToQueue}
+                    onCreateMix={handleCreateMix}
                     isAdding={addingId === result.videoId}
+                    isCreatingMix={creatingMixId === result.videoId}
                   />
                 ))}
               </div>

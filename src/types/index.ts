@@ -30,6 +30,7 @@ export type WSMessage =
   | { type: "lyrics"; lyrics: LyricLine[] }
   | { type: "track_ended" }
   | { type: "playback_state"; state: PlaybackState }
+  | { type: "play_error"; error: string; track: Track | null }
   | { type: "play" }
   | { type: "pause" }
   | { type: "skip" }
@@ -41,4 +42,11 @@ export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+// 串流 URL 結果
+export interface StreamUrlResult {
+  url: string;
+  source: "youtube-ext" | "invidious";
+  bitrate?: number;
 }

@@ -415,6 +415,26 @@ export MPV_PATH=/path/to/mpv
 
 MIT License
 
+## 已知問題 / TODO
+
+### YouTube.js 直接串流 URL 無法獲取 (2026-03)
+
+**問題描述**：
+YouTube API 返回的 `streaming_data` 中，`url`、`signature_cipher`、`cipher` 屬性皆為 `undefined`，導致無法直接獲取串流 URL。
+
+**影響**：
+- 目前使用 yt-dlp fallback 機制播放（延遲約 1.5 秒）
+- 理想情況下直接使用 youtubei.js 提取的 URL 可減少延遲至約 0.5 秒
+
+**相關 Issue**：
+- [LuanRT/YouTube.js#1123](https://github.com/LuanRT/YouTube.js/issues/1123) - "Video unavailable for SABR, leading to no valid URL to decipher"
+
+**狀態**：等待 YouTube.js 更新修復
+
+**Workaround**：目前系統會自動 fallback 到 mpv + yt-dlp 解析，功能正常但延遲較高。
+
+---
+
 ## 作者
 
 基於 [youtube-music-cli](https://github.com/involvex/youtube-music-cli) 專案開發

@@ -3,17 +3,22 @@ import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime } from "@/utils/format";
 import type { Track } from "@/types";
+import { Plus, Shuffle } from "lucide-react";
 
 interface SearchResultItemProps {
   result: Track;
-  onAdd: (videoId: string) => void;
+  onAdd: (track: Track) => void;
+  onCreateMix: (track: Track) => void;
   isAdding?: boolean;
+  isCreatingMix?: boolean;
 }
 
 export const SearchResultItem = ({
   result,
   onAdd,
+  onCreateMix,
   isAdding,
+  isCreatingMix,
 }: SearchResultItemProps) => {
   return (
     <Card className="p-4">
@@ -30,13 +35,31 @@ export const SearchResultItem = ({
             {formatTime(result.duration)}
           </p>
         </div>
-        <Button
-          onClick={() => onAdd(result.videoId)}
-          disabled={isAdding}
-          size="sm"
-        >
-          {isAdding ? "加入中..." : "加入佇列"}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => onAdd(result)}
+            disabled={isAdding || isCreatingMix}
+            size="sm"
+          >
+            {isAdding ? (
+              "加入中..."
+            ) : (
+              <>
+                <Plus className="w-4 h-4 mr-1" />
+                加入佇列
+              </>
+            )}
+          </Button>
+          <Button
+            onClick={() => onCreateMix(result)}
+            disabled={isAdding || isCreatingMix}
+            size="sm"
+            variant="outline"
+            title="創建 Mix 混合播放清單"
+          >
+            {isCreatingMix ? "建立中..." : <Shuffle className="w-4 h-4" />}
+          </Button>
+        </div>
       </div>
     </Card>
   );

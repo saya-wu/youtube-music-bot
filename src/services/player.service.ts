@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { connect, type Socket } from "node:net";
 import { log } from "../utils/logger.ts";
 
@@ -22,7 +22,62 @@ class PlayerService {
   private playSessionId = 0;
   private eofHandled = false;
 
-  private constructor() {}
+  private constructor() {
+    // 在啟動時清理可能殘留的舊 mpv 進程
+    this.cleanupOrphanedMpvProcesses();
+
+    // 監聽進程退出信號，確保清理 mpv 進程
+    this.setupExitHandlers();
+  }
+
+  /**
+   * 清理可能殘留的舊 mpv 進程（從之前的伺服器實例）
+   */
+  private cleanupOrphanedMpvProcesses(): void {
+    try {
+      if (process.platform === "win32") {
+        // Windows: 使用 taskkill（但要小心不要殺死其他 mpv 實例）
+        // 這裡我們選擇不自動清理 Windows 上的進程
+        log.debug("Skipping orphaned mpv cleanup on Windows");
+      } else {
+        // macOS/Linux: 查找並終止使用我們 IPC socket 模式的 mpv 進程
+        const result = execSync(
+          `pgrep -f "input-ipc-server=/tmp/mpvsocket-" 2>/dev/null || true`,
+          { encoding: "utf-8" },
+        );
+        const pids = result.trim().split("\n").filter(Boolean);
+
+        if (pids.length > 0) {
+          log.info("Found orphaned mpv processes, cleaning up", { pids });
+          for (const pid of pids) {
+            try {
+              process.kill(parseInt(pid, 10), "SIGTERM");
+            } catch (e) {
+              // 進程可能已經結束
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // 忽略錯誤，這只是清理嘗試
+      log.debug("Orphaned mpv cleanup skipped", { error });
+    }
+  }
+
+  /**
+   * 設置進程退出處理器
+   */
+  private setupExitHandlers(): void {
+    const cleanup = () => {
+      log.info("Server shutting down, cleaning up mpv process");
+      this.stop();
+    };
+
+    // 只設置一次
+    process.once("SIGINT", cleanup);
+    process.once("SIGTERM", cleanup);
+    process.once("exit", cleanup);
+  }
 
   static getInstance(): PlayerService {
     if (!PlayerService.instance) {
@@ -240,6 +295,21 @@ class PlayerService {
 
     return new Promise<void>((resolve, reject) => {
       try {
+        // 根據平台選擇音頻輸出參數
+        const getAudioArgs = (): string[] => {
+          if (process.platform === "darwin") {
+            log.debug("Using CoreAudio for macOS");
+            return ["--ao=coreaudio"]; // macOS 使用 CoreAudio
+          } else if (process.platform === "win32") {
+            log.debug("Using WASAPI for Windows");
+            return ["--ao=wasapi"]; // Windows 使用 WASAPI
+          } else {
+            // Linux: 嘗試 PulseAudio 優先，ALSA 備選
+            log.debug("Using PulseAudio/ALSA for Linux");
+            return ["--ao=pulse,alsa"];
+          }
+        };
+
         const mpvArgs = [
           "--no-video",
           // 移除 "--no-terminal" - 在容器環境中會導致 mpv 立即退出
@@ -253,12 +323,18 @@ class PlayerService {
           "--cache-secs=30",
           "--network-timeout=30", // 增加超時時間
           "--gapless-audio=yes",
-          "--ao=alsa", // 強制使用 ALSA 音頻輸出
-          "--audio-device=alsa/plughw:CARD=Headphones,DEV=0", // 明確指定音頻設備
+          ...getAudioArgs(), // 動態音頻參數
           url,
         ];
 
         const mpvCommand = process.platform === "win32" ? "mpv.exe" : "mpv";
+
+        log.info("Spawning mpv process", {
+          command: mpvCommand,
+          argsCount: mpvArgs.length,
+          ipcPath: this.ipcPath,
+          platform: process.platform,
+        });
 
         const spawnedProcess = spawn(mpvCommand, mpvArgs, {
           detached: true,
@@ -289,12 +365,18 @@ class PlayerService {
         setTimeout(() => {
           this.connectIpc()
             .then(() => {
-              console.log("IPC connected successfully");
+              log.info("IPC connected successfully");
               handleSuccess();
             })
             .catch((error) => {
-              console.warn("Failed to connect IPC:", error.message);
-              // 即使 IPC 連接失敗，基本播放仍會繼續
+              log.error(
+                "Failed to connect IPC - playback will continue without state sync",
+                {
+                  error: error.message,
+                  ipcPath: this.ipcPath,
+                },
+              );
+              // 仍然返回成功，但記錄這是降級模式
               handleSuccess();
             });
         }, ipcDelay);
@@ -303,7 +385,15 @@ class PlayerService {
         spawnedProcess.stderr?.on("data", (data: Buffer) => {
           const error = data.toString().trim();
           if (error) {
-            console.error("mpv error:", error);
+            log.warn("mpv stderr", { output: error });
+          }
+        });
+
+        // 處理 stdout（診斷用）
+        spawnedProcess.stdout?.on("data", (data: Buffer) => {
+          const output = data.toString().trim();
+          if (output) {
+            log.debug("mpv stdout", { output: output.substring(0, 200) });
           }
         });
 
@@ -360,6 +450,186 @@ class PlayerService {
         log.debug("mpv process started");
       } catch (error) {
         log.error("Exception in play()", { error });
+        this.isPlaying = false;
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * 直接播放串流 URL（不需要 yt-dlp 解析）
+   */
+  async playUrl(streamUrl: string, volume?: number): Promise<void> {
+    log.info("Playing stream URL", {
+      volume: volume ?? this.currentVolume,
+    });
+
+    // 停止當前播放
+    this.stop();
+
+    if (volume !== undefined) {
+      this.currentVolume = volume;
+    }
+
+    // 遞增 session ID（每次播放都有唯一的 IPC 路徑）
+    this.playSessionId++;
+    this.ipcPath = this.getIpcPath();
+    this.eofHandled = false;
+
+    return new Promise<void>((resolve, reject) => {
+      try {
+        // 根據平台選擇音頻輸出參數
+        const getAudioArgs = (): string[] => {
+          if (process.platform === "darwin") {
+            log.debug("Using CoreAudio for macOS");
+            return ["--ao=coreaudio"];
+          } else if (process.platform === "win32") {
+            log.debug("Using WASAPI for Windows");
+            return ["--ao=wasapi"];
+          } else {
+            log.debug("Using PulseAudio/ALSA for Linux");
+            return ["--ao=pulse,alsa"];
+          }
+        };
+
+        const mpvArgs = [
+          "--no-video",
+          `--volume=${this.currentVolume}`,
+          "--no-audio-display",
+          "--msg-level=all=info",
+          `--input-ipc-server=${this.ipcPath}`,
+          "--cache=yes",
+          "--cache-secs=30",
+          "--network-timeout=30",
+          "--gapless-audio=yes",
+          ...getAudioArgs(), // 動態音頻參數
+          streamUrl, // 直接使用串流 URL
+        ];
+
+        const mpvCommand = process.platform === "win32" ? "mpv.exe" : "mpv";
+
+        log.info("Spawning mpv process for stream URL", {
+          command: mpvCommand,
+          argsCount: mpvArgs.length,
+          ipcPath: this.ipcPath,
+          platform: process.platform,
+          urlLength: streamUrl.length,
+        });
+
+        const spawnedProcess = spawn(mpvCommand, mpvArgs, {
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+
+        this.mpvProcess = spawnedProcess;
+        this.isPlaying = true;
+        let isResolved = false;
+
+        const handleSuccess = () => {
+          if (!isResolved) {
+            isResolved = true;
+            resolve();
+          }
+        };
+
+        const handleError = (err: Error) => {
+          if (!isResolved) {
+            isResolved = true;
+            reject(err);
+          }
+        };
+
+        // 延遲連接 IPC（Windows 需要更長時間）
+        const ipcDelay = process.platform === "win32" ? 500 : 200;
+        setTimeout(() => {
+          this.connectIpc()
+            .then(() => {
+              log.info("IPC connected successfully");
+              handleSuccess();
+            })
+            .catch((error) => {
+              log.error(
+                "Failed to connect IPC - playback will continue without state sync",
+                {
+                  error: error.message,
+                  ipcPath: this.ipcPath,
+                },
+              );
+              // 仍然返回成功，但記錄這是降級模式
+              handleSuccess();
+            });
+        }, ipcDelay);
+
+        // 處理 stderr
+        spawnedProcess.stderr?.on("data", (data: Buffer) => {
+          const error = data.toString().trim();
+          if (error) {
+            log.warn("mpv stderr", { output: error });
+          }
+        });
+
+        // 處理 stdout（診斷用）
+        spawnedProcess.stdout?.on("data", (data: Buffer) => {
+          const output = data.toString().trim();
+          if (output) {
+            log.debug("mpv stdout", { output: output.substring(0, 200) });
+          }
+        });
+
+        // 處理進程退出
+        spawnedProcess.on("exit", (code, signal) => {
+          log.info("mpv process exited", {
+            code,
+            signal,
+            eofHandled: this.eofHandled,
+            isPlaying: this.isPlaying,
+          });
+
+          if (this.mpvProcess === spawnedProcess) {
+            this.isPlaying = false;
+            this.mpvProcess = null;
+          }
+
+          if (code === 0) {
+            log.info("Checking if need to trigger EOF from exit", {
+              eofHandled: this.eofHandled,
+            });
+            // 只在 IPC 未發送 eof 時才手動觸發
+            if (!this.eofHandled && this.eventCallback) {
+              log.info("Triggering EOF from process exit (fallback)");
+              this.eventCallback({ eof: true });
+            }
+            handleSuccess();
+          } else if (code !== null && code > 0) {
+            handleError(new Error(`mpv exited with code ${code}`));
+          }
+        });
+
+        // 處理錯誤
+        spawnedProcess.on("error", (error: Error) => {
+          log.error("mpv process error", { error: error.message });
+
+          if (this.mpvProcess === spawnedProcess) {
+            this.isPlaying = false;
+            this.mpvProcess = null;
+          }
+
+          if ("code" in error && error.code === "ENOENT") {
+            handleError(
+              new Error(
+                "mpv executable not found. Install mpv and ensure it's in PATH.",
+              ),
+            );
+            return;
+          }
+
+          handleError(error);
+        });
+
+        log.debug("mpv process started with stream URL");
+      } catch (error) {
+        log.error("Exception in playUrl()", { error });
         this.isPlaying = false;
         reject(error);
       }

@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { usePlayerStore } from "@/stores/playerStore";
 import { api } from "@/services/api";
+import { Spinner } from "@/components/ui/spinner";
 
 export const PlaybackControls = () => {
   // 分別選擇以避免創建新對象
@@ -8,8 +9,12 @@ export const PlaybackControls = () => {
   const currentTrack = usePlayerStore(
     (state) => state.playbackState.currentTrack,
   );
+  const isLoadingTrack = usePlayerStore((state) => state.isLoadingTrack);
 
   const handlePlayPause = async () => {
+    // 載入中時不允許操作
+    if (isLoadingTrack) return;
+
     if (isPlaying) {
       await api.pause();
     } else {
@@ -27,10 +32,12 @@ export const PlaybackControls = () => {
         variant="ghost"
         size="lg"
         onClick={handlePlayPause}
-        disabled={!currentTrack}
+        disabled={!currentTrack || isLoadingTrack}
         title={isPlaying ? "暫停" : "播放"}
       >
-        {isPlaying ? (
+        {isLoadingTrack ? (
+          <Spinner size="sm" />
+        ) : isPlaying ? (
           <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
             <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
           </svg>

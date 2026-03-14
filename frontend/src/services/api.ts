@@ -39,10 +39,18 @@ class ApiService {
   }
 
   // 加入到佇列
-  async addToQueue(videoId: string): Promise<ApiResponse<void>> {
+  async addToQueue(track: Track): Promise<ApiResponse<void>> {
     return this.request<void>("/queue", {
       method: "POST",
-      body: JSON.stringify({ videoId }),
+      body: JSON.stringify({ track }),
+    });
+  }
+
+  // 創建 Mix 混合播放清單
+  async createMix(track: Track): Promise<ApiResponse<{ count: number }>> {
+    return this.request<{ count: number }>("/mix", {
+      method: "POST",
+      body: JSON.stringify({ track }),
     });
   }
 
