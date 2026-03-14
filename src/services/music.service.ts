@@ -30,6 +30,83 @@ async function getClient() {
   return ytClient;
 }
 
+type MixPanelItem = {
+  video_id?: string;
+  id?: string;
+  title?: string | { text?: string };
+  artists?: Array<{ name?: string }>;
+  author?: string | { name?: string };
+  duration?: number | { seconds?: number };
+};
+
+function getMixTrackArtistName(item: MixPanelItem): string {
+  if (Array.isArray(item.artists)) {
+    const names = item.artists
+      .map((artist) => artist?.name?.trim())
+      .filter((name): name is string => Boolean(name));
+
+    if (names.length > 0) {
+      return names.join(", ");
+    }
+  }
+
+  if (typeof item.author === "string" && item.author.trim()) {
+    return item.author;
+  }
+
+  if (
+    typeof item.author === "object" &&
+    typeof item.author?.name === "string" &&
+    item.author.name.trim()
+  ) {
+    return item.author.name;
+  }
+
+  return "Unknown";
+}
+
+export function normalizeMixTracks(
+  contents: unknown[],
+  seedVideoId: string,
+  limit: number,
+): Track[] {
+  const tracks: Track[] = [];
+
+  for (const item of contents) {
+    const video = item as MixPanelItem;
+    const itemVideoId = video.video_id || video.id;
+
+    if (!itemVideoId || itemVideoId === seedVideoId) {
+      continue;
+    }
+
+    const title =
+      typeof video.title === "string" ? video.title : video.title?.text;
+    if (!title || !title.trim()) {
+      continue;
+    }
+
+    const duration =
+      typeof video.duration === "number"
+        ? video.duration
+        : video.duration?.seconds || 0;
+
+    tracks.push({
+      videoId: itemVideoId,
+      title,
+      artist: getMixTrackArtistName(video),
+      duration,
+      thumbnail: `https://img.youtube.com/vi/${itemVideoId}/mqdefault.jpg`,
+    });
+
+    if (tracks.length >= limit) {
+      break;
+    }
+  }
+
+  return tracks;
+}
+
 // 解析 LRC 格式歌詞
 function parseLrc(lrc: string): LyricLine[] {
   const lines: LyricLine[] = [];
@@ -237,7 +314,7 @@ class MusicService {
 
       if (format?.url) {
         const url = yt.session?.player?.decipher
-          ? yt.session.player.decipher(format.url)
+          ? await yt.session.player.decipher(format.url)
           : format.url;
 
         if (url && url.length > 0) {
@@ -271,36 +348,7 @@ class MusicService {
     try {
       const yt = await getClient();
       const panel = await yt.music.getUpNext(videoId, true);
-
-      const tracks: Track[] = [];
-      const contents = panel.contents || [];
-
-      for (const item of contents) {
-        const video = item as any;
-        const itemVideoId = video.video_id || video.id;
-
-        if (!itemVideoId || itemVideoId === videoId) continue;
-
-        const artists = video.artists || video.author || [];
-        const artistName = Array.isArray(artists)
-          ? artists.map((a: any) => a.name).join(", ")
-          : typeof artists === "string"
-            ? artists
-            : "Unknown";
-
-        tracks.push({
-          videoId: itemVideoId,
-          title:
-            typeof video.title === "string"
-              ? video.title
-              : video.title?.text || "Unknown",
-          artist: artistName,
-          duration: video.duration?.seconds || 0,
-          thumbnail: `https://img.youtube.com/vi/${itemVideoId}/mqdefault.jpg`,
-        });
-
-        if (tracks.length >= limit) break;
-      }
+      const tracks = normalizeMixTracks(panel.contents || [], videoId, limit);
 
       log.info("Mix tracks fetched", { count: tracks.length });
       return tracks;
@@ -319,4 +367,9 @@ export function getMusicService(): MusicService {
     musicServiceInstance = new MusicService();
   }
   return musicServiceInstance;
+}
+
+export function __resetMusicServiceForTests(): void {
+  musicServiceInstance = null;
+  ytClient = null;
 }

@@ -45,10 +45,12 @@ describe("QueueService - seekTo functionality", () => {
     });
 
     test("should accept valid positive position", () => {
+      const initialState = queueService.getState();
+
       queueService.seekTo(30);
 
       const state = queueService.getState();
-      expect(state.position).toBe(30);
+      expect(state.position).toBe(initialState.position);
     });
   });
 

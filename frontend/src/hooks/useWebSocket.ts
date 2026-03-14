@@ -24,6 +24,9 @@ export const useWebSocket = () => {
     (message: WSMessage) => {
       switch (message.type) {
         case "playback_state":
+          if (message.state.currentTrack || message.state.queue.length > 0) {
+            usePlayerStore.getState().setLoadingTrack(false);
+          }
           setPlaybackState(message.state);
           break;
 

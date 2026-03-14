@@ -8,7 +8,8 @@ type PlaybackStateCallback = (state: PlaybackState) => void;
 type LyricsChangeCallback = (lyrics: any[]) => void;
 
 class QueueService {
-  private static instance: QueueService;
+  private static instance: QueueService | undefined;
+  private mixRequestId = 0;
   private queue: Track[] = [];
   private currentTrack: Track | null = null;
   private currentPosition = 0;
@@ -62,6 +63,13 @@ class QueueService {
       QueueService.instance = new QueueService();
     }
     return QueueService.instance;
+  }
+
+  static resetInstanceForTests(): void {
+    if (QueueService.instance) {
+      QueueService.instance.resetForTests();
+    }
+    QueueService.instance = undefined;
   }
 
   /**
@@ -150,6 +158,7 @@ class QueueService {
    */
   async createMixFromTrack(baseTrack: Track): Promise<Track[]> {
     log.info("Creating mix", { baseTrack: baseTrack.title });
+    const mixRequestId = ++this.mixRequestId;
 
     // 停止當前播放
     await getPlayerService().stop();
@@ -157,28 +166,50 @@ class QueueService {
     // 清空佇列
     this.queue = [];
     this.currentTrack = null;
+    this.currentPosition = 0;
+    this.currentDuration = 0;
+    this.isPaused = false;
+    this.broadcastQueueChange();
+    this.broadcastState();
 
     // 先加入基礎歌曲
     this.queue.push(baseTrack);
-
-    // 嘗試獲取推薦歌曲
-    let mixTracks: Track[] = [];
-    try {
-      mixTracks = await getMusicService().getMixTracks(baseTrack.videoId, 10);
-      if (mixTracks.length > 0) {
-        this.queue.push(...mixTracks);
-      }
-    } catch (error) {
-      log.warn("Failed to get mix tracks, playing base track only", { error });
-    }
 
     log.info("Mix created, starting playback", {
       addedTracks: this.queue.length,
     });
     this.broadcastQueueChange();
 
-    // 無論是否有推薦歌曲，都開始播放
+    // 先開始播放 base song，不等待推薦歌曲回來。
     await this.playNext();
+
+    // 再背景補上推薦歌曲。
+    let mixTracks: Track[] = [];
+    try {
+      mixTracks = await getMusicService().getMixTracks(baseTrack.videoId, 10);
+
+      // 如果期間又建立了新的 mix，就丟棄舊結果避免污染 queue。
+      if (mixRequestId !== this.mixRequestId) {
+        log.info("Discarding stale mix tracks", {
+          baseTrack: baseTrack.title,
+          mixRequestId,
+          currentMixRequestId: this.mixRequestId,
+        });
+        return [baseTrack];
+      }
+
+      if (mixTracks.length > 0) {
+        this.queue.push(...mixTracks);
+        this.broadcastQueueChange();
+
+        // 若 base song 已結束且播放器空閒，補上的 mix 要能自動接續播放。
+        if (this.currentTrack === null && !getPlayerService().isCurrentlyPlaying()) {
+          await this.playNext();
+        }
+      }
+    } catch (error) {
+      log.warn("Failed to get mix tracks, playing base track only", { error });
+    }
 
     return [baseTrack, ...mixTracks];
   }
@@ -232,41 +263,36 @@ class QueueService {
     this.fetchAndBroadcastLyrics();
 
     try {
-      // 先嘗試獲取串流 URL（優化延遲）
-      log.info("Fetching stream URL", { videoId: nextTrack.videoId });
-      const streamResult = await getMusicService().getStreamUrl(
-        nextTrack.videoId,
-      );
-      log.info("Stream URL obtained", {
-        source: streamResult.source,
-        urlLength: streamResult.url.length,
-        urlPrefix: streamResult.url.substring(0, 50) + "...",
-      });
-      await getPlayerService().playUrl(streamResult.url);
-      log.info("Playback started successfully via stream URL");
-    } catch (streamError) {
-      // Fallback：使用原始 play() 讓 mpv 透過 yt-dlp 解析
-      log.warn("Stream URL extraction failed, falling back to yt-dlp", {
+      // 先交給 mpv + yt-dlp 處理 YouTube URL，與參考實作一致且更穩定。
+      await getPlayerService().play(nextTrack.videoId);
+      log.info("Playback started successfully via yt-dlp");
+    } catch (playError) {
+      // Fallback：若 yt-dlp 路徑失敗，再退回直接串流 URL。
+      log.warn("Primary playback failed, falling back to direct stream URL", {
         error:
-          streamError instanceof Error
-            ? streamError.message
-            : String(streamError),
-        stack: streamError instanceof Error ? streamError.stack : undefined,
+          playError instanceof Error ? playError.message : String(playError),
+        stack: playError instanceof Error ? playError.stack : undefined,
         videoId: nextTrack.videoId,
       });
 
       try {
-        log.info("Attempting fallback play via yt-dlp", {
+        log.info("Fetching stream URL for playback fallback", {
           videoId: nextTrack.videoId,
         });
-        await getPlayerService().play(nextTrack.videoId);
-        log.info("Fallback play succeeded");
+        const streamResult = await getMusicService().getStreamUrl(
+          nextTrack.videoId,
+        );
+        log.info("Stream URL obtained", {
+          source: streamResult.source,
+          urlLength: streamResult.url.length,
+          urlPrefix: streamResult.url.substring(0, 50) + "...",
+        });
+        await getPlayerService().playUrl(streamResult.url);
+        log.info("Fallback stream playback succeeded");
       } catch (fallbackError) {
-        log.error("Both stream URL and fallback play failed", {
-          streamError:
-            streamError instanceof Error
-              ? streamError.message
-              : String(streamError),
+        log.error("Both primary playback and stream fallback failed", {
+          playError:
+            playError instanceof Error ? playError.message : String(playError),
           fallbackError:
             fallbackError instanceof Error
               ? fallbackError.message
@@ -388,8 +414,25 @@ class QueueService {
         log.error("Failed to fetch lyrics", { error });
       });
   }
+
+  resetForTests(): void {
+    this.mixRequestId = 0;
+    this.queue = [];
+    this.currentTrack = null;
+    this.currentPosition = 0;
+    this.currentDuration = 0;
+    this.isPaused = false;
+    this.lastEofTimestamp = 0;
+    this.queueChangeCallbacks = [];
+    this.stateChangeCallbacks = [];
+    this.lyricsChangeCallbacks = [];
+  }
 }
 
 export function getQueueService(): QueueService {
   return QueueService.getInstance();
+}
+
+export function __resetQueueServiceForTests(): void {
+  QueueService.resetInstanceForTests();
 }

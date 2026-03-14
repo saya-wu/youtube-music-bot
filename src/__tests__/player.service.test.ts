@@ -1,10 +1,15 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
-import { getPlayerService } from "../services/player.service.ts";
+import type { ChildProcess } from "node:child_process";
+import {
+  __resetPlayerServiceForTests,
+  getPlayerService,
+} from "../services/player.service.ts";
 
 describe("PlayerService - seek functionality", () => {
   let playerService: ReturnType<typeof getPlayerService>;
 
   beforeEach(() => {
+    __resetPlayerServiceForTests();
     playerService = getPlayerService();
   });
 
@@ -104,6 +109,59 @@ describe("PlayerService - seek functionality", () => {
 
       playerService.setVolume(100);
       expect(playerService.getVolume()).toBe(100);
+    });
+  });
+
+  describe("intentional stop exit handling", () => {
+    test("should suppress eof when an intentionally stopped process exits cleanly", () => {
+      const fakeProcess = {
+        kill: mock(() => true),
+      } as unknown as ChildProcess;
+      const eventSpy = mock(() => {});
+      const player = playerService as unknown as {
+        mpvProcess: ChildProcess | null;
+        eofHandled: boolean;
+        handleSpawnedProcessExit: (
+          process: ChildProcess,
+          code: number | null,
+          signal: NodeJS.Signals | null,
+          handleSuccess: () => void,
+          handleError: (error: Error) => void,
+        ) => void;
+      };
+
+      playerService.onEvent(eventSpy);
+      player.mpvProcess = fakeProcess;
+      player.eofHandled = false;
+
+      playerService.stop();
+      player.handleSpawnedProcessExit(fakeProcess, 0, null, () => {}, () => {});
+
+      expect(eventSpy).not.toHaveBeenCalled();
+    });
+
+    test("should keep natural eof behavior for a normal clean exit", () => {
+      const fakeProcess = {} as ChildProcess;
+      const eventSpy = mock(() => {});
+      const player = playerService as unknown as {
+        mpvProcess: ChildProcess | null;
+        eofHandled: boolean;
+        handleSpawnedProcessExit: (
+          process: ChildProcess,
+          code: number | null,
+          signal: NodeJS.Signals | null,
+          handleSuccess: () => void,
+          handleError: (error: Error) => void,
+        ) => void;
+      };
+
+      playerService.onEvent(eventSpy);
+      player.mpvProcess = fakeProcess;
+      player.eofHandled = false;
+
+      player.handleSpawnedProcessExit(fakeProcess, 0, null, () => {}, () => {});
+
+      expect(eventSpy).toHaveBeenCalledWith({ eof: true });
     });
   });
 });

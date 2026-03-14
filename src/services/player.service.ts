@@ -12,6 +12,7 @@ export type PlayerEventCallback = (event: {
 class PlayerService {
   private static instance: PlayerService;
   private mpvProcess: ChildProcess | null = null;
+  private intentionallyStoppedProcesses = new WeakSet<ChildProcess>();
   private ipcSocket: Socket | null = null;
   private ipcPath: string | null = null;
   private currentVolume = 70;
@@ -271,6 +272,67 @@ class PlayerService {
     this.eventCallback(event);
   }
 
+  private markProcessAsIntentionallyStopped(
+    process: ChildProcess | null,
+  ): void {
+    if (process) {
+      this.intentionallyStoppedProcesses.add(process);
+    }
+  }
+
+  private consumeIntentionallyStoppedProcess(process: ChildProcess): boolean {
+    if (!this.intentionallyStoppedProcesses.has(process)) {
+      return false;
+    }
+
+    this.intentionallyStoppedProcesses.delete(process);
+    return true;
+  }
+
+  private handleSpawnedProcessExit(
+    spawnedProcess: ChildProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    handleSuccess: () => void,
+    handleError: (err: Error) => void,
+  ): void {
+    const intentionallyStopped =
+      this.consumeIntentionallyStoppedProcess(spawnedProcess);
+
+    log.info("mpv process exited", {
+      code,
+      signal,
+      eofHandled: this.eofHandled,
+      isPlaying: this.isPlaying,
+      intentionallyStopped,
+    });
+
+    if (this.mpvProcess === spawnedProcess) {
+      this.isPlaying = false;
+      this.mpvProcess = null;
+    }
+
+    if (intentionallyStopped) {
+      log.info("Ignoring exit from intentionally stopped mpv process");
+      handleSuccess();
+      return;
+    }
+
+    if (code === 0) {
+      log.info("Checking if need to trigger EOF from exit", {
+        eofHandled: this.eofHandled,
+      });
+      // 只在 IPC 未發送 eof 時才手動觸發
+      if (!this.eofHandled && this.eventCallback) {
+        log.info("Triggering EOF from process exit (fallback)");
+        this.eventCallback({ eof: true });
+      }
+      handleSuccess();
+    } else if (code !== null && code > 0) {
+      handleError(new Error(`mpv exited with code ${code}`));
+    }
+  }
+
   /**
    * 播放 YouTube 影片（只播放音訊）
    */
@@ -322,8 +384,6 @@ class PlayerService {
           "--cache-secs=30",
           "--network-timeout=60", // 增加超時時間（樹莓派需要更長）
           "--gapless-audio=yes",
-          // 使用 iOS client 加速 yt-dlp 提取（從 26 秒減到 9 秒）
-          '--ytdl-raw-options=extractor-args="youtube:player_client=ios"',
           ...getAudioArgs(),
           url,
         ];
@@ -400,31 +460,13 @@ class PlayerService {
 
         // 處理進程退出
         spawnedProcess.on("exit", (code, signal) => {
-          log.info("mpv process exited", {
+          this.handleSpawnedProcessExit(
+            spawnedProcess,
             code,
             signal,
-            eofHandled: this.eofHandled,
-            isPlaying: this.isPlaying,
-          });
-
-          if (this.mpvProcess === spawnedProcess) {
-            this.isPlaying = false;
-            this.mpvProcess = null;
-          }
-
-          if (code === 0) {
-            log.info("Checking if need to trigger EOF from exit", {
-              eofHandled: this.eofHandled,
-            });
-            // 只在 IPC 未發送 eof 時才手動觸發
-            if (!this.eofHandled && this.eventCallback) {
-              log.info("Triggering EOF from process exit (fallback)");
-              this.eventCallback({ eof: true });
-            }
-            handleSuccess();
-          } else if (code !== null && code > 0) {
-            handleError(new Error(`mpv exited with code ${code}`));
-          }
+            handleSuccess,
+            handleError,
+          );
         });
 
         // 處理錯誤
@@ -580,31 +622,13 @@ class PlayerService {
 
         // 處理進程退出
         spawnedProcess.on("exit", (code, signal) => {
-          log.info("mpv process exited", {
+          this.handleSpawnedProcessExit(
+            spawnedProcess,
             code,
             signal,
-            eofHandled: this.eofHandled,
-            isPlaying: this.isPlaying,
-          });
-
-          if (this.mpvProcess === spawnedProcess) {
-            this.isPlaying = false;
-            this.mpvProcess = null;
-          }
-
-          if (code === 0) {
-            log.info("Checking if need to trigger EOF from exit", {
-              eofHandled: this.eofHandled,
-            });
-            // 只在 IPC 未發送 eof 時才手動觸發
-            if (!this.eofHandled && this.eventCallback) {
-              log.info("Triggering EOF from process exit (fallback)");
-              this.eventCallback({ eof: true });
-            }
-            handleSuccess();
-          } else if (code !== null && code > 0) {
-            handleError(new Error(`mpv exited with code ${code}`));
-          }
+            handleSuccess,
+            handleError,
+          );
         });
 
         // 處理錯誤
@@ -665,6 +689,7 @@ class PlayerService {
     // 終止 mpv 進程
     if (this.mpvProcess) {
       try {
+        this.markProcessAsIntentionallyStopped(this.mpvProcess);
         this.mpvProcess.kill("SIGTERM");
         this.mpvProcess = null;
         this.isPlaying = false;
@@ -713,8 +738,23 @@ class PlayerService {
   isCurrentlyPlaying(): boolean {
     return this.isPlaying;
   }
+
+  resetForTests(): void {
+    this.stop();
+    this.eventCallback = null;
+    this.currentVolume = 70;
+    this.isPlaying = false;
+    this.intentionallyStoppedProcesses = new WeakSet<ChildProcess>();
+    this.ipcConnectRetries = 0;
+    this.playSessionId = 0;
+    this.eofHandled = false;
+  }
 }
 
 export function getPlayerService(): PlayerService {
   return PlayerService.getInstance();
+}
+
+export function __resetPlayerServiceForTests(): void {
+  PlayerService.getInstance().resetForTests();
 }
