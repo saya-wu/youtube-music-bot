@@ -11,11 +11,12 @@ import { reorderItems } from "@/utils/reorder";
 
 interface QueueContentProps {
   className?: string;
+  mobile?: boolean;
 }
 
 type DropPosition = "before" | "after";
 
-export const QueueContent = ({ className }: QueueContentProps) => {
+export const QueueContent = ({ className, mobile = false }: QueueContentProps) => {
   const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{
@@ -82,11 +83,16 @@ export const QueueContent = ({ className }: QueueContentProps) => {
 
   return (
     <ScrollArea
-      className={cn("desktop-scrollbar h-full min-h-0 w-full", className)}
+      className={cn(
+        "h-full min-h-0 w-full",
+        !mobile && "desktop-scrollbar",
+        className,
+      )}
       maxHeight="100%"
     >
       <QueueList
         queue={queue}
+        mobile={mobile}
         onRemove={handleRemove}
         onReorder={handleReorder}
         removingIndex={removingIndex}

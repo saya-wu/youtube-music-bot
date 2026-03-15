@@ -35,8 +35,8 @@ interface PlayerStore {
   setMobileSearchOpen: (open: boolean) => void;
 
   // 手機版 TabBar 狀態
-  mobileActiveTab: "search" | "lyrics" | "queue" | "library";
-  setMobileActiveTab: (tab: "search" | "lyrics" | "queue" | "library") => void;
+  mobileActiveTab: "search" | "library";
+  setMobileActiveTab: (tab: "search" | "library") => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set) => ({

@@ -25,44 +25,6 @@ export const TabBar = () => {
       ),
     },
     {
-      id: "lyrics" as const,
-      label: "歌詞",
-      icon: (
-        <svg
-          className="w-6 h-6"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: "queue" as const,
-      label: "佇列",
-      icon: (
-        <svg
-          className="w-6 h-6"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
-          />
-        </svg>
-      ),
-    },
-    {
       id: "library" as const,
       label: "資料庫",
       icon: (
@@ -84,16 +46,16 @@ export const TabBar = () => {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-gray-700/50">
-      <div className="grid grid-cols-4 min-h-20 pb-safe">
+    <div className="fixed bottom-0 left-0 right-0 z-40 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:hidden">
+      <div className="surface-card grid min-h-20 grid-cols-2 rounded-[30px] border p-1.5 shadow-[0_22px_44px_-32px_rgba(15,23,42,0.3)]">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+            className={`flex min-h-[70px] flex-col items-center justify-center gap-1 rounded-[22px] transition-all ${
               activeTab === tab.id
-                ? "text-blue-500"
-                : "text-gray-500 dark:text-gray-300"
+                ? "bg-[var(--surface-elevated)] text-[var(--accent)] shadow-[0_14px_28px_-24px_var(--accent-glow)]"
+                : "text-[var(--text-secondary)]"
             }`}
           >
             <div

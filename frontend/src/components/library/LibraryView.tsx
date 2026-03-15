@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useLibraryStore, getCurrentDevice } from "@/stores/libraryStore";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,39 @@ import { Avatar } from "@/components/ui/avatar";
 import { api } from "@/services/api";
 import { formatTime } from "@/utils/format";
 import { cn } from "@/lib/utils";
-import type { Playlist, PlaylistTrackEntry, SavedMix } from "@/types/library";
-import { ArrowLeft, Music4, Plus, Radio, Trash2 } from "lucide-react";
+import type {
+  HistoryEntry,
+  PairedDevice,
+  Playlist,
+  PlaylistTrackEntry,
+  SavedMix,
+} from "@/types/library";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Clock3,
+  Heart,
+  ListMusic,
+  Music4,
+  Plus,
+  Radio,
+  Search,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import {
+  Tabs,
+  TabsContent,
+  TabsIndicator,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 interface LibraryViewProps {
   isMobile?: boolean;
 }
+
+type LibrarySection = "playlists" | "favorites" | "history";
 
 export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
   const snapshot = useLibraryStore((state) => state.snapshot);
@@ -39,12 +66,58 @@ export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
   const [isPairing, setIsPairing] = useState(false);
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [activeSection, setActiveSection] = useState<LibrarySection>("playlists");
+  const [sectionSearch, setSectionSearch] = useState<Record<LibrarySection, string>>({
+    playlists: "",
+    favorites: "",
+    history: "",
+  });
 
   const selectedPlaylist = useMemo(
     () => snapshot?.playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? null,
     [selectedPlaylistId, snapshot?.playlists],
   );
   const currentDevice = getCurrentDevice(snapshot ?? null);
+  const favoriteTrackIds = useMemo(
+    () => new Set(snapshot?.favorites.map((favorite) => favorite.videoId) ?? []),
+    [snapshot?.favorites],
+  );
+  const normalizedQuery = sectionSearch[activeSection].trim().toLowerCase();
+  const filteredPlaylists = useMemo(() => {
+    const playlists = snapshot?.playlists ?? [];
+
+    if (!normalizedQuery) {
+      return playlists;
+    }
+
+    return playlists.filter((playlist) =>
+      playlist.name.toLowerCase().includes(normalizedQuery),
+    );
+  }, [normalizedQuery, snapshot?.playlists]);
+  const filteredFavorites = useMemo(() => {
+    const favorites = snapshot?.favorites ?? [];
+
+    if (!normalizedQuery) {
+      return favorites.map((favorite) => favorite.track);
+    }
+
+    return favorites
+      .map((favorite) => favorite.track)
+      .filter((track) =>
+        `${track.title} ${track.artist}`.toLowerCase().includes(normalizedQuery),
+      );
+  }, [normalizedQuery, snapshot?.favorites]);
+  const filteredHistory = useMemo(() => {
+    const history = snapshot?.history ?? [];
+
+    if (!normalizedQuery) {
+      return history;
+    }
+
+    return history.filter((entry) =>
+      `${entry.track.title} ${entry.track.artist}`.toLowerCase().includes(normalizedQuery),
+    );
+  }, [normalizedQuery, snapshot?.history]);
 
   if (!ready || !snapshot) {
     return (
@@ -189,229 +262,85 @@ export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
       }
     />
   ) : (
-    <div className="space-y-6">
-      <div
-        className={
-          isMobile
-            ? "space-y-4"
-            : "grid gap-4 md:grid-cols-2 2xl:grid-cols-4"
+    isMobile ? (
+      <MobileLibraryHome
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        searchValue={sectionSearch[activeSection]}
+        onSearchChange={(value) =>
+          setSectionSearch((current) => ({ ...current, [activeSection]: value }))
         }
-      >
-        <SummaryCard title="收藏歌曲" value={snapshot.favorites.length} />
-        <SummaryCard title="播放歷史" value={snapshot.history.length} />
-        <SummaryCard title="已儲存 Mix" value={snapshot.savedMixes.length} />
-        <SummaryCard title="自定歌單" value={snapshot.playlists.length} />
-      </div>
-
-      <Card className="surface-card rounded-[30px] p-5">
-        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px] 2xl:items-start">
-          <div className="flex-1">
-            <h3 className="text-xl font-semibold text-[var(--text-primary)]">自定歌單</h3>
-            <p className="mt-1 max-w-[44rem] text-sm leading-6 text-[var(--text-secondary)]">
-              建立不限數量的歌單，把喜歡的歌曲整理成自己的播放清單。你可以手動排序、直接播放，或加入目前佇列。
-            </p>
-          </div>
-          <div className="surface-subtle rounded-[24px] border p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-              建立新歌單
-            </p>
-            <div className="mt-3 flex flex-col gap-3">
-              <input
-                value={playlistName}
-                onChange={(event) => setPlaylistName(event.target.value)}
-                placeholder="例如：深夜放鬆、開車、工作中"
-                className="h-12 rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface-elevated)] px-4 text-sm text-[var(--text-primary)] outline-none"
-              />
-              <Button
-                className="h-12 rounded-2xl px-5"
-                onClick={handleCreatePlaylist}
-                disabled={!playlistName.trim()}
-              >
-                <Plus className="h-4 w-4" />
-                建立歌單
-              </Button>
-            </div>
-          </div>
-        </div>
-        <div className="mt-5 grid gap-3 2xl:grid-cols-2">
-          {snapshot.playlists.length === 0 ? (
-            <Empty title="尚未建立歌單" description="從搜尋、目前播放或佇列開始收藏想聽的歌。" />
-          ) : (
-            snapshot.playlists.map((playlist) => (
-              <button
-                key={playlist.id}
-                type="button"
-                className="surface-subtle flex items-center justify-between rounded-[24px] border px-4 py-4 text-left transition-transform hover:-translate-y-0.5"
-                onClick={() => selectPlaylist(playlist.id)}
-              >
-                <div>
-                  <p className="text-base font-semibold text-[var(--text-primary)]">
-                    {playlist.name}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    {playlist.tracks.length} 首歌曲
-                  </p>
-                </div>
-                <span className="text-sm font-semibold text-[var(--accent)]">
-                  打開
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      </Card>
-
-      <div className={isMobile ? "space-y-6" : "grid gap-6 2xl:grid-cols-2"}>
-        <TrackSection
-          title="收藏歌曲"
-          description="把想反覆播放的歌曲收進這裡。"
-          emptyTitle="還沒有收藏歌曲"
-          tracks={snapshot.favorites.map((favorite) => favorite.track)}
-          actionLabel="移除收藏"
-          onAction={(track) => void toggleFavorite(track)}
-          onQueueAction={(track) => void handleAddTrackToQueue(track)}
-          onPlaylistAction={(track) => openPlaylistPicker(track)}
-        />
-        <TrackSection
-          title="播放歷史"
-          description="依最近播放順序整理。"
-          emptyTitle="還沒有播放歷史"
-          tracks={snapshot.history.map((entry) => entry.track)}
-          actionLabel="收藏"
-          onAction={(track) => void toggleFavorite(track)}
-          onQueueAction={(track) => void handleAddTrackToQueue(track)}
-          onPlaylistAction={(track) => openPlaylistPicker(track)}
-        />
-      </div>
-
-      <Card className="surface-card rounded-[30px] p-5">
-        <div className="mb-4">
-          <h3 className="text-xl font-semibold text-[var(--text-primary)]">已儲存 Mix</h3>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            把喜歡的推薦組合留在這裡，之後可以快速重播。
-          </p>
-        </div>
-        <div className="grid gap-3">
-          {snapshot.savedMixes.length === 0 ? (
-            <Empty title="尚未儲存 Mix" description="從搜尋建立 Mix 後，會自動保存在這裡。" />
-          ) : (
-            snapshot.savedMixes.map((savedMix) => (
-              <div
-                key={savedMix.id}
-                className="surface-subtle flex flex-col gap-4 rounded-[24px] border px-4 py-4 lg:flex-row lg:items-center lg:justify-between"
-              >
-                <div className="min-w-0">
-                  <p className="text-base font-semibold text-[var(--text-primary)]">
-                    {savedMix.seedTrack.title}
-                  </p>
-                  <p className="mt-1 truncate text-sm text-[var(--text-secondary)]">
-                    {savedMix.seedTrack.artist} · {savedMix.tracks.length} 首
-                  </p>
-                </div>
-                <div className="flex gap-3">
-                  <Button
-                    variant="outline"
-                    className="rounded-2xl"
-                    onClick={() => handleReplayMix(savedMix)}
-                  >
-                    <Radio className="h-4 w-4" />
-                    重播 Mix
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="rounded-2xl text-red-500"
-                    onClick={async () => {
-                      await deleteSavedMix(savedMix.id);
-                      showToast({ message: "已從媒體庫移除 Mix", type: "success" });
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    刪除
-                  </Button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
-
-      <Card className="surface-card rounded-[30px] p-5">
-        <div className="mb-4">
-          <h3 className="text-xl font-semibold text-[var(--text-primary)]">已配對裝置</h3>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            使用配對碼連接不同裝置，讓收藏、歷史、Mix 和歌單一起同步。
-          </p>
-        </div>
-        <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="surface-subtle rounded-[24px] border px-4 py-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-              配對碼
-            </p>
-            <p className="mt-2 text-2xl font-semibold tracking-[0.28em] text-[var(--text-primary)]">
-              {syncPairCode ?? "------"}
-            </p>
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              {syncStatus === "connected"
-                ? "目前同步已連線，其他裝置輸入這組代碼即可加入。"
-                : syncStatus === "connecting"
-                  ? "正在建立同步連線..."
-                  : "同步尚未就緒，系統會自動重試。"}
-            </p>
-            {syncError ? (
-              <p className="mt-2 text-sm text-red-500">{syncError}</p>
-            ) : null}
-          </div>
-          <div className="flex flex-col gap-3">
-            <input
-              value={pairCodeInput}
-              onChange={(event) => setPairCodeInput(event.target.value.toUpperCase())}
-              placeholder="輸入配對碼"
-              className="h-12 min-w-[200px] rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] px-4 text-sm tracking-[0.22em] text-[var(--text-primary)] uppercase outline-none"
-            />
-            <Button
-              className="h-12 rounded-2xl px-5"
-              disabled={isPairing || pairCodeInput.trim().length < 6}
-              onClick={() => void handlePairDevice()}
-            >
-              連接裝置
-            </Button>
-          </div>
-        </div>
-        <div className="grid gap-3">
-          {snapshot.pairedDevices.map((device) => (
-            <div
-              key={device.id}
-              className="surface-subtle flex items-center justify-between gap-4 rounded-[24px] border px-4 py-4"
-            >
-              <div>
-                <p className="text-base font-semibold text-[var(--text-primary)]">
-                  {device.name}
-                </p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {device.kind === "desktop" ? "桌面裝置" : "手機裝置"} · {device.connected ? "已連線" : "離線"}{device.lastSeenAt ? ` · ${new Date(device.lastSeenAt).toLocaleString()}` : ""}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {device.id === currentDevice?.id ? (
-                  <span className="rounded-full border border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
-                    本機
-                  </span>
-                ) : null}
-                {!device.isCurrentDevice && snapshot.syncSessionId ? (
-                  <Button
-                    variant="outline"
-                    className="rounded-2xl"
-                    onClick={() => void handleRemoveDevice(device.id)}
-                  >
-                    移除
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-    </div>
+        playlistName={playlistName}
+        onPlaylistNameChange={setPlaylistName}
+        onCreatePlaylist={() => void handleCreatePlaylist()}
+        playlists={filteredPlaylists}
+        favoriteTracks={filteredFavorites}
+        historyEntries={filteredHistory}
+        favoriteTrackIds={favoriteTrackIds}
+        savedMixes={snapshot.savedMixes}
+        pairedDevices={snapshot.pairedDevices}
+        syncPairCode={syncPairCode}
+        syncStatus={syncStatus}
+        syncError={syncError}
+        pairCodeInput={pairCodeInput}
+        onPairCodeInputChange={setPairCodeInput}
+        isPairing={isPairing}
+        onPairDevice={() => void handlePairDevice()}
+        onOpenPlaylist={(playlistId) => selectPlaylist(playlistId)}
+        onTrackQueue={(track) => void handleAddTrackToQueue(track)}
+        onTrackPlaylist={(track) => openPlaylistPicker(track)}
+        onTrackFavorite={(track) => void toggleFavorite(track)}
+        onReplayMix={(savedMix) => void handleReplayMix(savedMix)}
+        onDeleteMix={async (mixId) => {
+          await deleteSavedMix(mixId);
+          showToast({ message: "已從媒體庫移除 Mix", type: "success" });
+        }}
+        onRemoveDevice={(deviceId) => void handleRemoveDevice(deviceId)}
+        currentDeviceId={currentDevice?.id ?? null}
+      />
+    ) : (
+      <DesktopLibraryHome
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        searchValue={sectionSearch[activeSection]}
+        onSearchChange={(value) =>
+          setSectionSearch((current) => ({ ...current, [activeSection]: value }))
+        }
+        playlistName={playlistName}
+        onPlaylistNameChange={setPlaylistName}
+        onCreatePlaylist={() => void handleCreatePlaylist()}
+        playlists={filteredPlaylists}
+        favoriteTracks={filteredFavorites}
+        historyEntries={filteredHistory}
+        favoriteTrackIds={favoriteTrackIds}
+        savedMixes={snapshot.savedMixes}
+        pairedDevices={snapshot.pairedDevices}
+        syncPairCode={syncPairCode}
+        syncStatus={syncStatus}
+        syncError={syncError}
+        pairCodeInput={pairCodeInput}
+        onPairCodeInputChange={setPairCodeInput}
+        isPairing={isPairing}
+        onPairDevice={() => void handlePairDevice()}
+        onOpenPlaylist={(playlistId) => selectPlaylist(playlistId)}
+        onTrackQueue={(track) => void handleAddTrackToQueue(track)}
+        onTrackPlaylist={(track) => openPlaylistPicker(track)}
+        onTrackFavorite={(track) => void toggleFavorite(track)}
+        onReplayMix={(savedMix) => void handleReplayMix(savedMix)}
+        onDeleteMix={async (mixId) => {
+          await deleteSavedMix(mixId);
+          showToast({ message: "已從媒體庫移除 Mix", type: "success" });
+        }}
+        onRemoveDevice={(deviceId) => void handleRemoveDevice(deviceId)}
+        currentDeviceId={currentDevice?.id ?? null}
+        counts={{
+          playlists: snapshot.playlists.length,
+          favorites: snapshot.favorites.length,
+          history: snapshot.history.length,
+          mixes: snapshot.savedMixes.length,
+        }}
+      />
+    )
   );
 
   const contentClassName = isMobile
@@ -434,87 +363,720 @@ export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
   );
 };
 
-const SummaryCard = ({ title, value }: { title: string; value: number }) => (
-  <Card className="surface-subtle rounded-[28px] border p-5">
-    <p className="text-sm font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
-      {title}
-    </p>
-    <p className="mt-3 text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
-      {value}
-    </p>
-  </Card>
-);
-
-interface TrackSectionProps {
-  title: string;
-  description: string;
-  emptyTitle: string;
-  tracks: PlaylistTrackEntry["track"][];
-  actionLabel: string;
-  onAction: (track: PlaylistTrackEntry["track"]) => void;
-  onQueueAction: (track: PlaylistTrackEntry["track"]) => void;
-  onPlaylistAction: (track: PlaylistTrackEntry["track"]) => void;
+interface LibraryHomeBaseProps {
+  activeSection: LibrarySection;
+  onSectionChange: (section: LibrarySection) => void;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  playlistName: string;
+  onPlaylistNameChange: (value: string) => void;
+  onCreatePlaylist: () => void;
+  playlists: Playlist[];
+  favoriteTracks: PlaylistTrackEntry["track"][];
+  historyEntries: HistoryEntry[];
+  favoriteTrackIds: Set<string>;
+  savedMixes: SavedMix[];
+  pairedDevices: PairedDevice[];
+  syncPairCode: string | null;
+  syncStatus: "idle" | "connecting" | "connected" | "error";
+  syncError: string | null;
+  pairCodeInput: string;
+  onPairCodeInputChange: (value: string) => void;
+  isPairing: boolean;
+  onPairDevice: () => void;
+  onOpenPlaylist: (playlistId: string) => void;
+  onTrackQueue: (track: PlaylistTrackEntry["track"]) => void;
+  onTrackPlaylist: (track: PlaylistTrackEntry["track"]) => void;
+  onTrackFavorite: (track: PlaylistTrackEntry["track"]) => void;
+  onReplayMix: (savedMix: SavedMix) => void;
+  onDeleteMix: (mixId: string) => void | Promise<void>;
+  onRemoveDevice: (deviceId: string) => void;
+  currentDeviceId: string | null;
 }
 
-const TrackSection = ({
-  title,
-  description,
+interface DesktopLibraryHomeProps extends LibraryHomeBaseProps {
+  counts: {
+    playlists: number;
+    favorites: number;
+    history: number;
+    mixes: number;
+  };
+}
+
+const DesktopLibraryHome = ({
+  activeSection,
+  onSectionChange,
+  searchValue,
+  onSearchChange,
+  playlistName,
+  onPlaylistNameChange,
+  onCreatePlaylist,
+  playlists,
+  favoriteTracks,
+  historyEntries,
+  favoriteTrackIds,
+  savedMixes,
+  pairedDevices,
+  syncPairCode,
+  syncStatus,
+  syncError,
+  pairCodeInput,
+  onPairCodeInputChange,
+  isPairing,
+  onPairDevice,
+  onOpenPlaylist,
+  onTrackQueue,
+  onTrackPlaylist,
+  onTrackFavorite,
+  onReplayMix,
+  onDeleteMix,
+  onRemoveDevice,
+  currentDeviceId,
+  counts,
+}: DesktopLibraryHomeProps) => (
+  <div className="space-y-6">
+    <Card className="surface-card rounded-[34px] p-6 xl:p-7">
+      <div className="space-y-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-[42rem] space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
+              Library
+            </p>
+            <h2 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
+              收藏、歌單與歷史整理在同一個工作區
+            </h2>
+            <p className="text-sm leading-7 text-[var(--text-secondary)]">
+              透過分頁滑塊快速切換自定歌單、收藏歌曲與播放歷史，每一區都能獨立搜尋與捲動。
+            </p>
+          </div>
+          <LibrarySearchField
+            value={searchValue}
+            onChange={onSearchChange}
+            placeholder={getSectionSearchPlaceholder(activeSection)}
+            className="w-full xl:max-w-[340px]"
+          />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-4">
+          <LibraryMetricPill
+            icon={<ListMusic className="h-4 w-4" />}
+            label="自定歌單"
+            value={counts.playlists}
+          />
+          <LibraryMetricPill
+            icon={<Heart className="h-4 w-4" />}
+            label="收藏歌曲"
+            value={counts.favorites}
+          />
+          <LibraryMetricPill
+            icon={<Clock3 className="h-4 w-4" />}
+            label="播放歷史"
+            value={counts.history}
+          />
+          <LibraryMetricPill
+            icon={<Sparkles className="h-4 w-4" />}
+            label="已儲存 Mix"
+            value={counts.mixes}
+          />
+        </div>
+
+        <Tabs
+          value={activeSection}
+          onValueChange={(value) => onSectionChange(value as LibrarySection)}
+          className="space-y-5"
+        >
+          <LibrarySectionTabs />
+          <TabsContent value="playlists" className="mt-0">
+            <PlaylistBrowser
+              isMobile={false}
+              playlistName={playlistName}
+              onPlaylistNameChange={onPlaylistNameChange}
+              onCreatePlaylist={onCreatePlaylist}
+              playlists={playlists}
+              onOpenPlaylist={onOpenPlaylist}
+            />
+          </TabsContent>
+          <TabsContent value="favorites" className="mt-0">
+            <TrackBrowser
+              isMobile={false}
+              emptyTitle="還沒有收藏歌曲"
+              emptyDescription="先把喜歡的歌加入收藏，這裡就會累積成自己的常聽清單。"
+              tracks={favoriteTracks}
+              getActionLabel={() => "移除收藏"}
+              onAction={onTrackFavorite}
+              onQueueAction={onTrackQueue}
+              onPlaylistAction={onTrackPlaylist}
+            />
+          </TabsContent>
+          <TabsContent value="history" className="mt-0">
+            <TrackBrowser
+              isMobile={false}
+              emptyTitle="還沒有播放歷史"
+              emptyDescription="開始播放幾首歌後，最近聽過的內容就會出現在這裡。"
+              tracks={historyEntries.map((entry) => entry.track)}
+              getActionLabel={(track) =>
+                favoriteTrackIds.has(track.videoId) ? "取消收藏" : "收藏"
+              }
+              onAction={onTrackFavorite}
+              onQueueAction={onTrackQueue}
+              onPlaylistAction={onTrackPlaylist}
+            />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </Card>
+
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.85fr)]">
+      <SavedMixPanel
+        savedMixes={savedMixes}
+        onReplayMix={onReplayMix}
+        onDeleteMix={onDeleteMix}
+      />
+      <DevicesPanel
+        pairedDevices={pairedDevices}
+        syncPairCode={syncPairCode}
+        syncStatus={syncStatus}
+        syncError={syncError}
+        pairCodeInput={pairCodeInput}
+        onPairCodeInputChange={onPairCodeInputChange}
+        isPairing={isPairing}
+        onPairDevice={onPairDevice}
+        onRemoveDevice={onRemoveDevice}
+        currentDeviceId={currentDeviceId}
+      />
+    </div>
+  </div>
+);
+
+const MobileLibraryHome = ({
+  activeSection,
+  onSectionChange,
+  searchValue,
+  onSearchChange,
+  playlistName,
+  onPlaylistNameChange,
+  onCreatePlaylist,
+  playlists,
+  favoriteTracks,
+  historyEntries,
+  favoriteTrackIds,
+  savedMixes,
+  pairedDevices,
+  syncPairCode,
+  syncStatus,
+  syncError,
+  pairCodeInput,
+  onPairCodeInputChange,
+  isPairing,
+  onPairDevice,
+  onOpenPlaylist,
+  onTrackQueue,
+  onTrackPlaylist,
+  onTrackFavorite,
+  onReplayMix,
+  onDeleteMix,
+  onRemoveDevice,
+  currentDeviceId,
+}: LibraryHomeBaseProps) => (
+  <div className="space-y-5">
+    <Card className="surface-card rounded-[32px] p-4">
+      <div className="space-y-4">
+        <div className="space-y-2 px-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+            Library
+          </p>
+          <h2 className="text-[2rem] font-semibold tracking-tight text-[var(--text-primary)]">
+            你的音樂資料庫
+          </h2>
+          <p className="text-sm leading-7 text-[var(--text-secondary)]">
+            用滑塊切換歌單、收藏與歷史，並在每個分頁裡直接搜尋與捲動。
+          </p>
+        </div>
+
+        <Tabs
+          value={activeSection}
+          onValueChange={(value) => onSectionChange(value as LibrarySection)}
+          className="space-y-4"
+        >
+          <LibrarySectionTabs mobile />
+          <LibrarySearchField
+            value={searchValue}
+            onChange={onSearchChange}
+            placeholder={getSectionSearchPlaceholder(activeSection)}
+          />
+          <TabsContent value="playlists" className="mt-0">
+            <PlaylistBrowser
+              isMobile
+              playlistName={playlistName}
+              onPlaylistNameChange={onPlaylistNameChange}
+              onCreatePlaylist={onCreatePlaylist}
+              playlists={playlists}
+              onOpenPlaylist={onOpenPlaylist}
+            />
+          </TabsContent>
+          <TabsContent value="favorites" className="mt-0">
+            <TrackBrowser
+              isMobile
+              emptyTitle="還沒有收藏歌曲"
+              emptyDescription="先把喜歡的歌加入收藏，這裡就會累積成自己的常聽清單。"
+              tracks={favoriteTracks}
+              getActionLabel={() => "移除收藏"}
+              onAction={onTrackFavorite}
+              onQueueAction={onTrackQueue}
+              onPlaylistAction={onTrackPlaylist}
+            />
+          </TabsContent>
+          <TabsContent value="history" className="mt-0">
+            <TrackBrowser
+              isMobile
+              emptyTitle="還沒有播放歷史"
+              emptyDescription="開始播放幾首歌後，最近聽過的內容就會出現在這裡。"
+              tracks={historyEntries.map((entry) => entry.track)}
+              getActionLabel={(track) =>
+                favoriteTrackIds.has(track.videoId) ? "取消收藏" : "收藏"
+              }
+              onAction={onTrackFavorite}
+              onQueueAction={onTrackQueue}
+              onPlaylistAction={onTrackPlaylist}
+            />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </Card>
+
+    <SavedMixPanel
+      mobile
+      savedMixes={savedMixes}
+      onReplayMix={onReplayMix}
+      onDeleteMix={onDeleteMix}
+    />
+    <DevicesPanel
+      mobile
+      pairedDevices={pairedDevices}
+      syncPairCode={syncPairCode}
+      syncStatus={syncStatus}
+      syncError={syncError}
+      pairCodeInput={pairCodeInput}
+      onPairCodeInputChange={onPairCodeInputChange}
+      isPairing={isPairing}
+      onPairDevice={onPairDevice}
+      onRemoveDevice={onRemoveDevice}
+      currentDeviceId={currentDeviceId}
+    />
+  </div>
+);
+
+const LibrarySectionTabs = ({ mobile = false }: { mobile?: boolean }) => (
+  <TabsList className={cn("grid w-full grid-cols-3", mobile ? "h-14 rounded-[26px]" : "max-w-[760px]")}>
+    <TabsTrigger value="playlists" className={cn(mobile && "text-sm")}>
+      自定歌單
+    </TabsTrigger>
+    <TabsTrigger value="favorites" className={cn(mobile && "text-sm")}>
+      收藏歌曲
+    </TabsTrigger>
+    <TabsTrigger value="history" className={cn(mobile && "text-sm")}>
+      歷史記錄
+    </TabsTrigger>
+    <TabsIndicator className={cn(mobile && "rounded-[20px]")} />
+  </TabsList>
+);
+
+const LibrarySearchField = ({
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  className?: string;
+}) => (
+  <label
+    className={cn(
+      "surface-subtle flex h-12 items-center gap-3 rounded-[20px] border px-4",
+      className,
+    )}
+  >
+    <Search className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+    <input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      className="h-full w-full bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+    />
+  </label>
+);
+
+const LibraryMetricPill = ({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+}) => (
+  <div className="surface-subtle flex items-center gap-4 rounded-[22px] border px-4 py-3">
+    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface-elevated)] text-[var(--accent)]">
+        {icon}
+    </span>
+    <div className="min-w-0 flex-1">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
+      {value}
+      </p>
+    </div>
+  </div>
+);
+
+const PlaylistBrowser = ({
+  isMobile,
+  playlistName,
+  onPlaylistNameChange,
+  onCreatePlaylist,
+  playlists,
+  onOpenPlaylist,
+}: {
+  isMobile: boolean;
+  playlistName: string;
+  onPlaylistNameChange: (value: string) => void;
+  onCreatePlaylist: () => void;
+  playlists: Playlist[];
+  onOpenPlaylist: (playlistId: string) => void;
+}) => (
+  <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "xl:grid-cols-[320px_minmax(0,1fr)]")}>
+    <Card className="surface-subtle rounded-[28px] border p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+        建立新歌單
+      </p>
+      <div className="mt-3 space-y-3">
+        <input
+          value={playlistName}
+          onChange={(event) => onPlaylistNameChange(event.target.value)}
+          placeholder="例如：深夜放鬆、開車、工作中"
+          className="h-12 w-full rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface-elevated)] px-4 text-sm text-[var(--text-primary)] outline-none"
+        />
+        <Button
+          className="h-12 w-full rounded-2xl"
+          onClick={onCreatePlaylist}
+          disabled={!playlistName.trim()}
+        >
+          <Plus className="h-4 w-4" />
+          建立歌單
+        </Button>
+      </div>
+    </Card>
+
+    <Card className="surface-subtle rounded-[28px] border p-3">
+      <ScrollArea
+        className="w-full"
+        maxHeight={isMobile ? "42vh" : "50vh"}
+      >
+        <div className="grid gap-3">
+          {playlists.length === 0 ? (
+            <Empty
+              title="尚未建立歌單"
+              description="建立第一張歌單後，就能從這裡打開、整理與播放。"
+            />
+          ) : (
+            playlists.map((playlist) => (
+              <button
+                key={playlist.id}
+                type="button"
+                className="surface-card flex items-center justify-between gap-4 rounded-[24px] border px-4 py-4 text-left transition-transform hover:-translate-y-0.5"
+                onClick={() => onOpenPlaylist(playlist.id)}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold text-[var(--text-primary)]">
+                    {playlist.name}
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                    {playlist.tracks.length} 首歌曲
+                  </p>
+                </div>
+                <span className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--accent)]">
+                  打開
+                  <ChevronRight className="h-4 w-4" />
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </Card>
+  </div>
+);
+
+const TrackBrowser = ({
+  isMobile,
   emptyTitle,
+  emptyDescription,
   tracks,
-  actionLabel,
+  getActionLabel,
   onAction,
   onQueueAction,
   onPlaylistAction,
-}: TrackSectionProps) => (
-  <Card className="surface-card rounded-[30px] p-5">
-    <div className="mb-4">
-      <h3 className="text-xl font-semibold text-[var(--text-primary)]">{title}</h3>
-      <p className="mt-1 text-sm text-[var(--text-secondary)]">{description}</p>
-    </div>
-    <div className="grid gap-3">
-      {tracks.length === 0 ? (
-        <Empty title={emptyTitle} description="先播放或整理幾首歌，這裡就會出現內容。" />
-      ) : (
-        tracks.slice(0, 8).map((track) => (
-          <div
-            key={`${title}-${track.videoId}`}
-            className="surface-subtle flex flex-col gap-4 rounded-[24px] border px-4 py-4 sm:flex-row sm:items-center"
-          >
-            <Avatar src={track.thumbnail} alt={track.title} size="md" className="rounded-2xl" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-base font-semibold text-[var(--text-primary)]">
-                {track.title}
-              </p>
-              <p className="truncate text-sm text-[var(--text-secondary)]">
-                {track.artist} · {formatTime(track.duration)}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-              <Button
-                variant="outline"
-                className="rounded-2xl px-3"
-                onClick={() => onQueueAction(track)}
-                aria-label={`加入播放佇列：${track.title}`}
+}: {
+  isMobile: boolean;
+  emptyTitle: string;
+  emptyDescription: string;
+  tracks: PlaylistTrackEntry["track"][];
+  getActionLabel: (track: PlaylistTrackEntry["track"]) => string;
+  onAction: (track: PlaylistTrackEntry["track"]) => void;
+  onQueueAction: (track: PlaylistTrackEntry["track"]) => void;
+  onPlaylistAction: (track: PlaylistTrackEntry["track"]) => void;
+}) => (
+  <Card className="surface-subtle rounded-[28px] border p-3">
+    <ScrollArea className="w-full" maxHeight={isMobile ? "42vh" : "50vh"}>
+      <div className="grid gap-3">
+        {tracks.length === 0 ? (
+          <Empty title={emptyTitle} description={emptyDescription} />
+        ) : (
+          tracks.map((track) => (
+            <div
+              key={`${track.videoId}-${track.title}`}
+              className={cn(
+                "surface-card gap-4 rounded-[24px] border",
+                isMobile
+                  ? "flex flex-col px-4 py-4"
+                  : "flex items-center px-4 py-4",
+              )}
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <Avatar
+                  src={track.thumbnail}
+                  alt={track.title}
+                  size="md"
+                  className="rounded-2xl"
+                />
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={cn(
+                      "font-semibold text-[var(--text-primary)]",
+                      isMobile ? "line-clamp-2 text-base leading-6" : "truncate text-base",
+                    )}
+                  >
+                    {track.title}
+                  </p>
+                  <p className="truncate text-sm text-[var(--text-secondary)]">
+                    {track.artist} · {formatTime(track.duration)}
+                  </p>
+                </div>
+              </div>
+              <div
+                className={cn(
+                  "flex shrink-0 gap-2",
+                  isMobile ? "flex-wrap" : "items-center justify-end",
+                )}
               >
-                <Plus className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-2xl"
-                onClick={() => onPlaylistAction(track)}
-              >
-                加入歌單
-              </Button>
-              <Button className="rounded-2xl" onClick={() => onAction(track)}>
-                {actionLabel}
-              </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-2xl px-3"
+                  onClick={() => onQueueAction(track)}
+                  aria-label={`加入播放佇列：${track.title}`}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-2xl"
+                  onClick={() => onPlaylistAction(track)}
+                >
+                  加入歌單
+                </Button>
+                <Button className="rounded-2xl" onClick={() => onAction(track)}>
+                  {getActionLabel(track)}
+                </Button>
+              </div>
             </div>
-          </div>
-        ))
-      )}
-    </div>
+          ))
+        )}
+      </div>
+    </ScrollArea>
   </Card>
 );
+
+const SavedMixPanel = ({
+  savedMixes,
+  onReplayMix,
+  onDeleteMix,
+  mobile = false,
+}: {
+  savedMixes: SavedMix[];
+  onReplayMix: (savedMix: SavedMix) => void;
+  onDeleteMix: (mixId: string) => void | Promise<void>;
+  mobile?: boolean;
+}) => (
+  <Card className="surface-card rounded-[30px] p-5">
+    <div className="mb-4">
+      <h3 className="text-xl font-semibold text-[var(--text-primary)]">已儲存 Mix</h3>
+      <p className="mt-1 text-sm text-[var(--text-secondary)]">
+        把喜歡的推薦組合留在這裡，之後可以快速重播。
+      </p>
+    </div>
+    <ScrollArea className="w-full" maxHeight={mobile ? "34vh" : "38vh"}>
+      <div className="grid gap-3">
+        {savedMixes.length === 0 ? (
+          <Empty title="尚未儲存 Mix" description="從搜尋建立 Mix 後，會自動保存在這裡。" />
+        ) : (
+          savedMixes.map((savedMix) => (
+            <div
+              key={savedMix.id}
+              className="surface-subtle flex flex-col gap-4 rounded-[24px] border px-4 py-4"
+            >
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-[var(--text-primary)]">
+                  {savedMix.seedTrack.title}
+                </p>
+                <p className="mt-1 truncate text-sm text-[var(--text-secondary)]">
+                  {savedMix.seedTrack.artist} · {savedMix.tracks.length} 首
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="outline"
+                  className="rounded-2xl"
+                  onClick={() => onReplayMix(savedMix)}
+                >
+                  <Radio className="h-4 w-4" />
+                  重播 Mix
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-2xl text-red-500"
+                  onClick={() => void onDeleteMix(savedMix.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  刪除
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </ScrollArea>
+  </Card>
+);
+
+const DevicesPanel = ({
+  pairedDevices,
+  syncPairCode,
+  syncStatus,
+  syncError,
+  pairCodeInput,
+  onPairCodeInputChange,
+  isPairing,
+  onPairDevice,
+  onRemoveDevice,
+  currentDeviceId,
+  mobile = false,
+}: {
+  pairedDevices: PairedDevice[];
+  syncPairCode: string | null;
+  syncStatus: "idle" | "connecting" | "connected" | "error";
+  syncError: string | null;
+  pairCodeInput: string;
+  onPairCodeInputChange: (value: string) => void;
+  isPairing: boolean;
+  onPairDevice: () => void;
+  onRemoveDevice: (deviceId: string) => void;
+  currentDeviceId: string | null;
+  mobile?: boolean;
+}) => (
+  <Card className="surface-card rounded-[30px] p-5">
+    <div className="mb-4">
+      <h3 className="text-xl font-semibold text-[var(--text-primary)]">已配對裝置</h3>
+      <p className="mt-1 text-sm text-[var(--text-secondary)]">
+        使用配對碼連接不同裝置，讓收藏、歷史、Mix 和歌單一起同步。
+      </p>
+    </div>
+    <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="surface-subtle rounded-[24px] border px-4 py-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+          配對碼
+        </p>
+        <p className="mt-2 text-2xl font-semibold tracking-[0.28em] text-[var(--text-primary)]">
+          {syncPairCode ?? "------"}
+        </p>
+        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          {syncStatus === "connected"
+            ? "目前同步已連線，其他裝置輸入這組代碼即可加入。"
+            : syncStatus === "connecting"
+              ? "正在建立同步連線..."
+              : "同步尚未就緒，系統會自動重試。"}
+        </p>
+        {syncError ? <p className="mt-2 text-sm text-red-500">{syncError}</p> : null}
+      </div>
+      <div className="flex flex-col gap-3">
+        <input
+          value={pairCodeInput}
+          onChange={(event) => onPairCodeInputChange(event.target.value.toUpperCase())}
+          placeholder="輸入配對碼"
+          className="h-12 min-w-[200px] rounded-2xl border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] px-4 text-sm tracking-[0.22em] text-[var(--text-primary)] uppercase outline-none"
+        />
+        <Button
+          className="h-12 rounded-2xl px-5"
+          disabled={isPairing || pairCodeInput.trim().length < 6}
+          onClick={onPairDevice}
+        >
+          連接裝置
+        </Button>
+      </div>
+    </div>
+    <ScrollArea className="w-full" maxHeight={mobile ? "28vh" : "30vh"}>
+      <div className="grid gap-3">
+        {pairedDevices.map((device) => (
+          <div
+            key={device.id}
+            className="surface-subtle flex items-center justify-between gap-4 rounded-[24px] border px-4 py-4"
+          >
+            <div className="min-w-0">
+              <p className="text-base font-semibold text-[var(--text-primary)]">
+                {device.name}
+              </p>
+              <p className="mt-1 truncate text-sm text-[var(--text-secondary)]">
+                {device.kind === "desktop" ? "桌面裝置" : "手機裝置"} ·{" "}
+                {device.connected ? "已連線" : "離線"}
+                {device.lastSeenAt ? ` · ${new Date(device.lastSeenAt).toLocaleString()}` : ""}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {device.id === currentDeviceId ? (
+                <span className="rounded-full border border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+                  本機
+                </span>
+              ) : null}
+              {!device.isCurrentDevice ? (
+                <Button
+                  variant="outline"
+                  className="rounded-2xl"
+                  onClick={() => onRemoveDevice(device.id)}
+                >
+                  移除
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </ScrollArea>
+  </Card>
+);
+
+function getSectionSearchPlaceholder(section: LibrarySection) {
+  if (section === "playlists") {
+    return "搜尋歌單名稱";
+  }
+
+  if (section === "favorites") {
+    return "搜尋收藏歌曲或歌手";
+  }
+
+  return "搜尋歷史歌曲或歌手";
+}
 
 interface PlaylistDetailProps {
   playlist: Playlist;

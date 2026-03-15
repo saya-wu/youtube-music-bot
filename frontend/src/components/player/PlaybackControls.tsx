@@ -41,17 +41,6 @@ export const PlaybackControls = ({
       ) : null}
       <div className="flex shrink-0 items-center gap-3">
         <Button
-          variant="outline"
-          size="lg"
-          onClick={handleSkip}
-          disabled={!currentTrack}
-          title="跳過"
-          className="h-[52px] w-[52px] shrink-0 rounded-full px-0"
-        >
-          <SkipForward className="h-5 w-5" />
-        </Button>
-
-        <Button
           variant="default"
           size="lg"
           onClick={handlePlayPause}
@@ -66,6 +55,17 @@ export const PlaybackControls = ({
           ) : (
             <Play className="h-7 w-7 fill-current" />
           )}
+        </Button>
+
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={handleSkip}
+          disabled={!currentTrack}
+          title="跳過"
+          className="h-[52px] w-[52px] shrink-0 rounded-full px-0"
+        >
+          <SkipForward className="h-5 w-5" />
         </Button>
       </div>
     </div>

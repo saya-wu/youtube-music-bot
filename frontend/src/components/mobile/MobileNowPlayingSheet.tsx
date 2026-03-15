@@ -1,85 +1,211 @@
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { useAppUiStore } from "@/stores/appUiStore";
-import { usePlayerStore } from "@/stores/playerStore";
-import { useLibraryStore } from "@/stores/libraryStore";
-import { NowPlaying } from "@/components/player/NowPlaying";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { AnimatedAvatar } from "@/components/ui/animated-avatar";
+import { useToast } from "@/components/ui/toast";
 import { ProgressBar } from "@/components/player/ProgressBar";
 import { PlaybackControls } from "@/components/player/PlaybackControls";
 import { VolumeControl } from "@/components/player/VolumeControl";
-import { RadioToggleButton } from "@/components/player/RadioToggleButton";
-import { Button } from "@/components/ui/button";
+import { LyricsDisplay } from "@/components/lyrics/LyricsDisplay";
+import { QueueSection } from "@/components/queue/QueueSection";
+import { useAppUiStore } from "@/stores/appUiStore";
+import { usePlayerStore } from "@/stores/playerStore";
+import { useLibraryStore } from "@/stores/libraryStore";
+import { Heart, Library, Music4 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const EMPTY_FAVORITES: Array<{ videoId: string }> = [];
 
 export const MobileNowPlayingSheet = () => {
   const isOpen = useAppUiStore((state) => state.isMobileNowPlayingOpen);
   const setOpen = useAppUiStore((state) => state.setMobileNowPlayingOpen);
+  const mobileNowPlayingView = useAppUiStore(
+    (state) => state.mobileNowPlayingView,
+  );
+  const setMobileNowPlayingView = useAppUiStore(
+    (state) => state.setMobileNowPlayingView,
+  );
   const currentTrack = usePlayerStore((state) => state.playbackState.currentTrack);
-  const setMobileActiveTab = usePlayerStore((state) => state.setMobileActiveTab);
+  const isPlaying = usePlayerStore((state) => state.playbackState.isPlaying);
+  const libraryReady = useLibraryStore((state) => state.ready);
+  const favorites = useLibraryStore(
+    (state) => state.snapshot?.favorites ?? EMPTY_FAVORITES,
+  );
+  const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
   const openPlaylistPicker = useLibraryStore((state) => state.openPlaylistPicker);
+  const { showToast } = useToast();
+
+  const isFavorite = currentTrack
+    ? favorites.some((favorite) => favorite.videoId === currentTrack.videoId)
+    : false;
+
+  const handleFavorite = async () => {
+    if (!currentTrack || !libraryReady) {
+      showToast({ message: "媒體庫正在初始化", type: "info" });
+      return;
+    }
+
+    try {
+      await toggleFavorite(currentTrack);
+      showToast({
+        message: isFavorite ? "已移除收藏" : "已加入收藏",
+        type: "success",
+      });
+    } catch {
+      showToast({ message: "收藏更新失敗", type: "error" });
+    }
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
-      <DialogContent className="left-0 top-auto h-[92vh] max-h-[92vh] w-full max-w-none translate-x-0 translate-y-0 rounded-t-[32px] rounded-b-none border-0 p-0 lg:hidden">
-        <div className="surface-card-strong flex h-full flex-col overflow-hidden rounded-t-[32px] px-5 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-4">
+      <DialogContent
+        variant="bottom-sheet"
+        className="lg:hidden border-0 bg-transparent p-0 shadow-none"
+      >
+        <div className="surface-card-strong flex h-[90dvh] max-h-[90dvh] flex-col overflow-hidden rounded-t-[34px] border border-b-0 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-28px_80px_-42px_var(--accent-glow)]">
           <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-[var(--surface-border)]" />
-          <div className="flex-1 overflow-y-auto pb-6">
-            <div className="space-y-8">
-              <NowPlaying showIdleState compact={false} />
-
-              {currentTrack ? (
-                <>
-                  <ProgressBar />
-                  <div className="flex justify-center">
-                    <PlaybackControls showRadioToggle={false} />
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <RadioToggleButton compact />
-                    <Button
-                      variant="outline"
-                      className="h-12 rounded-2xl px-4"
-                      onClick={() => {
-                        openPlaylistPicker(currentTrack);
-                      }}
-                    >
-                      加入歌單
-                    </Button>
-                  </div>
-                  <VolumeControl />
-                  <div className="grid grid-cols-3 gap-3">
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl"
-                      onClick={() => {
-                        setOpen(false);
-                        setMobileActiveTab("lyrics");
-                      }}
-                    >
-                      歌詞
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl"
-                      onClick={() => {
-                        setOpen(false);
-                        setMobileActiveTab("queue");
-                      }}
-                    >
-                      佇列
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl"
-                      onClick={() => {
-                        setOpen(false);
-                        setMobileActiveTab("library");
-                      }}
-                    >
-                      媒體庫
-                    </Button>
-                  </div>
-                </>
-              ) : null}
+          <div className="surface-subtle mb-4 rounded-[24px] border p-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { id: "player", label: "播放器" },
+                { id: "lyrics", label: "歌詞" },
+                { id: "queue", label: "佇列" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() =>
+                    setMobileNowPlayingView(
+                      tab.id as "player" | "lyrics" | "queue",
+                    )
+                  }
+                  className={cn(
+                    "h-11 rounded-[18px] text-sm font-semibold transition-all",
+                    mobileNowPlayingView === tab.id
+                      ? "bg-[var(--surface-elevated)] text-[var(--accent)] shadow-[0_14px_28px_-24px_var(--accent-glow)]"
+                      : "text-[var(--text-secondary)]",
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
           </div>
+
+          {!currentTrack ? (
+            <div className="flex flex-1 min-h-[480px] flex-col items-center justify-center gap-5 px-5 text-center">
+              <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] text-[var(--accent)]">
+                <Music4 className="h-10 w-10" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
+                  還沒有正在播放的歌曲
+                </h2>
+                <p className="text-base leading-7 text-[var(--text-secondary)]">
+                  先從搜尋頁加入一首歌，播放器、歌詞和佇列就會一起展開。
+                </p>
+              </div>
+            </div>
+          ) : mobileNowPlayingView === "player" ? (
+            <ScrollArea className="flex-1 min-h-0" maxHeight="100%">
+              <div className="space-y-5 pb-4">
+                <div className="flex flex-col items-center gap-4 px-2 pt-1 text-center">
+                  <div className="relative">
+                    <div className="absolute inset-5 rounded-[34px] bg-[var(--accent-soft)] blur-3xl opacity-85" />
+                    <AnimatedAvatar
+                      src={currentTrack.thumbnail}
+                      alt={currentTrack.title}
+                      size="lg"
+                      thumbnailQuality="maxresdefault"
+                      className="relative h-52 w-52 rounded-[30px] border border-[color:var(--dynamic-ring)] shadow-[0_28px_54px_-26px_rgba(15,23,42,0.55)]"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <span className="inline-flex rounded-full border border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.28em] text-[var(--text-primary)]">
+                      {isPlaying ? "Now Playing" : "Paused"}
+                    </span>
+                    <div className="space-y-2">
+                      <h2 className="text-[2.25rem] font-semibold leading-none tracking-tight text-[var(--text-primary)]">
+                        {currentTrack.title}
+                      </h2>
+                      <p className="text-xl text-[var(--text-secondary)]">
+                        {currentTrack.artist}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "h-[52px] rounded-[20px] text-base",
+                      isFavorite &&
+                        "border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] text-[var(--accent)]",
+                    )}
+                    onClick={() => void handleFavorite()}
+                  >
+                    <Heart
+                      className="h-4 w-4"
+                      fill={isFavorite ? "currentColor" : "none"}
+                    />
+                    {isFavorite ? "已收藏" : "收藏"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-[52px] rounded-[20px] text-base"
+                    onClick={() => openPlaylistPicker(currentTrack)}
+                  >
+                    <Library className="h-4 w-4" />
+                    加入歌單
+                  </Button>
+                </div>
+
+                <div className="surface-subtle rounded-[28px] border px-4 py-4">
+                  <ProgressBar />
+                </div>
+
+                <div className="surface-subtle rounded-[30px] border px-4 py-4">
+                  <div className="flex justify-center">
+                    <PlaybackControls />
+                  </div>
+                </div>
+
+                <VolumeControl className="max-w-none" />
+              </div>
+            </ScrollArea>
+          ) : (
+            <div className="flex flex-1 min-h-0 flex-col gap-4 pb-1">
+              <div className="surface-subtle flex items-center gap-3 rounded-[24px] border px-4 py-3">
+                <AnimatedAvatar
+                  src={currentTrack.thumbnail}
+                  alt={currentTrack.title}
+                  size="md"
+                  className="rounded-[18px]"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-base font-semibold text-[var(--text-primary)]">
+                    {currentTrack.title}
+                  </p>
+                  <p className="truncate text-sm text-[var(--text-secondary)]">
+                    {currentTrack.artist}
+                  </p>
+                </div>
+                <span className="rounded-full border border-[color:var(--dynamic-ring)] bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+                  {mobileNowPlayingView === "lyrics" ? "Lyrics" : "Queue"}
+                </span>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {mobileNowPlayingView === "lyrics" ? (
+                  <LyricsDisplay mobile className="h-full" isVisible />
+                ) : (
+                  <QueueSection mobile className="h-full" />
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

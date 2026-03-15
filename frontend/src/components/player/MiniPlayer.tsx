@@ -16,6 +16,9 @@ export const MiniPlayer = () => {
   const setMobileNowPlayingOpen = useAppUiStore(
     (state) => state.setMobileNowPlayingOpen,
   );
+  const setMobileNowPlayingView = useAppUiStore(
+    (state) => state.setMobileNowPlayingView,
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   const handlePlayPause = async (e: React.MouseEvent) => {
@@ -51,94 +54,94 @@ export const MiniPlayer = () => {
 
   return (
     <div
-      className="fixed bottom-[84px] left-0 right-0 z-50 border-t border-[color:var(--surface-border)] bg-[var(--surface-elevated)]/95 transition-colors lg:hidden"
-      onClick={() => {
-        if (currentTrack) {
-          setMobileNowPlayingOpen(true);
-        }
-      }}
+      className="fixed bottom-[104px] left-0 right-0 z-50 px-3 lg:hidden"
     >
-      {/* 進度條 */}
-      <div className="h-1 bg-[var(--surface-border)]">
-        <div
-          className="h-full bg-[var(--accent)] transition-all duration-300"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
+      <div
+        className="surface-card overflow-hidden rounded-[28px] border bg-[var(--surface-elevated)]/95 transition-colors"
+        onClick={() => {
+          if (currentTrack) {
+            setMobileNowPlayingView("player");
+            setMobileNowPlayingOpen(true);
+          }
+        }}
+      >
+        <div className="h-1 bg-[var(--surface-border)]">
+          <div
+            className="h-full bg-[var(--accent)] transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
 
-      {/* 播放信息與控制 */}
-      <div className="flex items-center gap-3 p-3 relative">
-        {currentTrack ? (
-          <>
-            {/* 專輯封面 */}
-            <AnimatedAvatar
-              src={currentTrack.thumbnail}
-              alt={currentTrack.title}
-              size="sm"
-            />
-
-            {/* 歌曲信息 */}
-            <div className="flex-1 min-w-0">
-              <p className="truncate text-sm font-medium text-[var(--text-primary)]">
-                {currentTrack.title}
-              </p>
-              <p className="truncate text-xs text-[var(--text-secondary)]">
-                {currentTrack.artist}
-              </p>
-            </div>
-
-            <RadioToggleButton indicatorOnly className="hidden sm:inline-flex" />
-
-            {/* 播放控制 */}
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
+        <div className="relative flex items-center gap-3 p-3">
+          {currentTrack ? (
+            <>
+              <AnimatedAvatar
+                src={currentTrack.thumbnail}
+                alt={currentTrack.title}
                 size="sm"
-                onClick={handlePlayPause}
-                disabled={isLoading}
-                title={isPlaying ? "暫停" : "播放"}
-              >
-                {isPlaying ? (
-                  <svg
-                    className="h-5 w-5"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                  </svg>
-                ) : (
-                  <svg
-                    className="h-5 w-5"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                )}
-              </Button>
+                className="rounded-[16px]"
+              />
 
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleSkip}
-                disabled={isLoading}
-                title="下一首"
-              >
-                <svg
-                  className="h-5 w-5"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+                  {currentTrack.title}
+                </p>
+                <p className="truncate text-xs text-[var(--text-secondary)]">
+                  {currentTrack.artist}
+                </p>
+              </div>
+
+              <RadioToggleButton indicatorOnly className="hidden sm:inline-flex" />
+
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePlayPause}
+                  disabled={isLoading}
+                  title={isPlaying ? "暫停" : "播放"}
+                  className="h-9 w-9 rounded-full px-0"
                 >
-                  <path d="M6 4l10 8-10 8V4zm12 0v16h2V4h-2z" />
-                </svg>
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* 無歌曲時的預設狀態 */}
-            <div className="flex items-center gap-3 flex-1">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--surface-muted)]">
+                  {isPlaying ? (
+                    <svg
+                      className="h-5 w-5"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="h-5 w-5"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSkip}
+                  disabled={isLoading}
+                  title="下一首"
+                  className="h-9 w-9 rounded-full px-0"
+                >
+                  <svg
+                    className="h-5 w-5"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M6 4l10 8-10 8V4zm12 0v16h2V4h-2z" />
+                  </svg>
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[16px] bg-[var(--surface-muted)]">
                 <svg
                   className="h-6 w-6 text-[var(--text-muted)]"
                   fill="currentColor"
@@ -147,7 +150,7 @@ export const MiniPlayer = () => {
                   <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
                 </svg>
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-[var(--text-secondary)]">
                   尚無播放歌曲
                 </p>
@@ -156,8 +159,8 @@ export const MiniPlayer = () => {
                 </p>
               </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

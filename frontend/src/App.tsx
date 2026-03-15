@@ -121,18 +121,8 @@ function App() {
         </div>
 
         {/* 手機版：根據 TabBar 狀態動態切換內容 */}
-        <div className="lg:hidden h-full">
+        <div className="h-full lg:hidden">
           {mobileActiveTab === "search" && <MobileContent />}
-          {mobileActiveTab === "lyrics" && (
-            <div className="h-full pb-[168px] overflow-hidden">
-              <LyricsDisplay isVisible={mobileActiveTab === "lyrics"} />
-            </div>
-          )}
-          {mobileActiveTab === "queue" && (
-            <div className="h-full pb-[168px] overflow-hidden">
-              <QueueSection />
-            </div>
-          )}
           {mobileActiveTab === "library" && <LibraryContent />}
         </div>
       </MainLayout>

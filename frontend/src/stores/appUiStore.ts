@@ -1,12 +1,15 @@
 import { create } from "zustand";
 
 type DesktopMode = "player" | "library";
+type MobileNowPlayingView = "player" | "lyrics" | "queue";
 
 interface AppUiStore {
   desktopMode: DesktopMode;
   setDesktopMode: (mode: DesktopMode) => void;
   isMobileNowPlayingOpen: boolean;
   setMobileNowPlayingOpen: (open: boolean) => void;
+  mobileNowPlayingView: MobileNowPlayingView;
+  setMobileNowPlayingView: (view: MobileNowPlayingView) => void;
 }
 
 export const useAppUiStore = create<AppUiStore>((set) => ({
@@ -15,4 +18,6 @@ export const useAppUiStore = create<AppUiStore>((set) => ({
   isMobileNowPlayingOpen: false,
   setMobileNowPlayingOpen: (isMobileNowPlayingOpen) =>
     set({ isMobileNowPlayingOpen }),
+  mobileNowPlayingView: "player",
+  setMobileNowPlayingView: (mobileNowPlayingView) => set({ mobileNowPlayingView }),
 }));

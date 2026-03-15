@@ -51,7 +51,7 @@ export const VolumeControl = ({ className }: VolumeControlProps) => {
   return (
     <div
       className={cn(
-        "flex h-[60px] w-full min-w-[280px] max-w-[360px] items-center gap-4 rounded-full border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] px-5",
+        "flex h-[60px] w-full min-w-0 max-w-[360px] items-center gap-4 rounded-full border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] px-5",
         className,
       )}
     >
