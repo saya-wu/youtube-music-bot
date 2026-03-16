@@ -11,6 +11,51 @@
 - 📝 **同步歌詞**：即時顯示歌詞（支援 LRC 格式）
 - 🔄 **即時同步**：透過 WebSocket 即時更新所有客戶端的狀態
 
+## 播放技術原理
+
+目前播放鏈路採用「多層 fallback」設計，目標是在 YouTube 對不同 IP、不同 client profile 行為不一致時，仍盡量保持可播放。
+
+### 後端播放流程
+
+1. 前端透過 `POST /api/queue`、`POST /api/mix` 或 radio 補歌，把 `Track` 送進 `QueueService`
+2. `QueueService.playNext()` 取出下一首歌，先呼叫 `MusicService.getStreamUrl(videoId)`
+3. `MusicService.getStreamUrl()` 先嘗試 `youtubei.js`
+4. 如果 `youtubei.js` 拿不到有效 audio URL，會 fallback 到 `yt-dlp -g`
+5. 後端拿到最終的直連音訊 URL 後，呼叫 `PlayerService.playUrl()`
+6. `PlayerService` 啟動 `mpv --no-video` 播放該 URL，並透過 mpv IPC 監聽進度、暫停、EOF
+7. 如果直連 URL 播放失敗，才退回 `PlayerService.play(videoId)`，讓 mpv 自己處理 YouTube URL
+
+### 為什麼這樣設計
+
+- `youtubei.js` 理論上最快，因為不需要額外啟動 CLI
+- `yt-dlp -g` 在實務上更抗 YouTube 的 bot 判定，尤其在樹莓派或家用網路 IP 上
+- `mpv` 直開 YouTube URL 仍保留作最後保底，避免單一路徑失效時完全不能播
+
+### 關鍵服務責任
+
+- [music.service.ts](/Users/bs10081/Developer/youtube_music_bot/src/services/music.service.ts)
+  負責搜尋、歌詞、mix、串流 URL 提取
+- [queue.service.ts](/Users/bs10081/Developer/youtube_music_bot/src/services/queue.service.ts)
+  負責 queue、mix、radio、播放策略與 fallback 決策
+- [player.service.ts](/Users/bs10081/Developer/youtube_music_bot/src/services/player.service.ts)
+  負責 mpv 行程、IPC 狀態同步、pause/resume/seek/stop
+- [ytdlp.ts](/Users/bs10081/Developer/youtube_music_bot/src/utils/ytdlp.ts)
+  負責 `yt-dlp` extractor args 與 cookies 設定
+
+### 與 anti-bot 有關的設定
+
+可以透過環境變數調整 `yt-dlp` 行為：
+
+```bash
+YTDLP_EXTRACTOR_ARGS="youtube:player_client=android_vr"
+YTDLP_COOKIES_FILE="/app/secrets/youtube-cookies.txt"
+```
+
+- `YTDLP_EXTRACTOR_ARGS`
+  用來指定 YouTube extractor profile，預設為 `youtube:player_client=android_vr`
+- `YTDLP_COOKIES_FILE`
+  當 YouTube 對目前 IP 要求人類驗證時，可掛入已登入帳號匯出的 cookies 檔
+
 ## 已知問題
 
 - 歌詞面板的「自動歸正到目前句中央」在重新整理頁面或重新回到瀏覽畫面後仍不穩定。
@@ -198,6 +243,95 @@ docker compose up -d
 docker compose logs -f
 ```
 
+#### 方式三：正式環境建議流程（GitHub + Docker Hub + 樹莓派）
+
+這是目前實際使用的部署方式，適合日常更新生產環境。
+
+**步驟 1：本地驗證**
+
+```bash
+bun run typecheck
+bun test src/__tests__
+npm run build:frontend
+npm run build
+```
+
+**步驟 2：提交並推送**
+
+```bash
+git add -A
+git commit -m "fix: your-change-summary"
+git push origin main
+```
+
+**步驟 3：建置 ARM64 映像並推送到 Docker Hub**
+
+```bash
+GIT_SHA=$(git rev-parse --short HEAD)
+
+docker buildx build \
+  --builder multiplatform-builder \
+  --platform linux/arm64 \
+  -t bs10081/youtube-music-bot:$GIT_SHA \
+  -t bs10081/youtube-music-bot:latest \
+  --push .
+```
+
+**步驟 4：在樹莓派更新 compose 使用的 image tag**
+
+假設 SSH alias 是 `moli-music`，而部署目錄是 `~/Host`：
+
+```bash
+GIT_SHA=$(git rev-parse --short HEAD)
+
+ssh moli-music '
+  cp ~/Host/docker-compose.yml ~/Host/docker-compose.yml.bak-$(date +%Y%m%d-%H%M%S) &&
+  sed -i "s|image: bs10081/youtube-music-bot:.*|image: bs10081/youtube-music-bot:'"$GIT_SHA"'|" ~/Host/docker-compose.yml &&
+  cd ~/Host &&
+  docker compose pull &&
+  docker compose up -d &&
+  docker compose ps
+'
+```
+
+**步驟 5：檢查部署後日誌**
+
+```bash
+ssh moli-music '
+  cd ~/Host &&
+  docker compose logs --tail=120 youtube-music-bot
+'
+```
+
+如果要直接驗證點歌 API：
+
+```bash
+ssh moli-music 'python3 - <<'"'"'PY'"'"'
+import json
+import urllib.request
+
+payload = {
+    "track": {
+        "videoId": "D2HoBIh3zJ4",
+        "title": "抽纸",
+        "artist": "衛蘭",
+        "duration": 229,
+        "thumbnail": "https://img.youtube.com/vi/D2HoBIh3zJ4/mqdefault.jpg",
+    }
+}
+
+req = urllib.request.Request(
+    "http://localhost:3000/api/queue",
+    data=json.dumps(payload).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+
+with urllib.request.urlopen(req, timeout=15) as response:
+    print(response.read().decode())
+PY'
+```
+
 ### 驗證部署
 
 1. 訪問 `http://<樹莓派IP>:3000`
@@ -251,6 +385,143 @@ environment:
 2. 檢查防火牆設定：`sudo ufw status`
 3. 查看詳細日誌：`docker compose logs -f`
 
+## 常見錯誤與 Debug 方式
+
+### 1. `Sign in to confirm you’re not a bot`
+
+這通常表示：
+
+- 目前出口 IP 被 YouTube 風控
+- `mpv` 內建的 YouTube 抽流路徑被擋
+- 需要 cookies 或不同 extractor profile
+
+**先做這個檢查：**
+
+```bash
+docker compose exec -T youtube-music-bot \
+  yt-dlp --no-warnings --no-playlist -g -f bestaudio/best \
+  --extractor-args "youtube:player_client=android_vr" \
+  "https://www.youtube.com/watch?v=D2HoBIh3zJ4"
+```
+
+如果這裡能拿到 `googlevideo.com` 的 URL，代表 `yt-dlp` fallback 仍然可用，問題通常不在最底層連線。
+
+如果這裡也失敗：
+
+- 嘗試掛 `YTDLP_COOKIES_FILE`
+- 嘗試更新 `yt-dlp`
+- 嘗試更換 `YTDLP_EXTRACTOR_ARGS`
+- 檢查目前網路 IP 是否被更嚴格限制
+
+### 2. `No suitable audio stream found`
+
+這通常是 `youtubei.js` 這條路拿不到可用 audio format。
+
+這不一定是致命錯誤，因為系統會自動 fallback 到 `yt-dlp -g`。真正要看的不是這一行本身，而是後面有沒有：
+
+- `Primary stream extraction failed, trying yt-dlp CLI fallback`
+- `Stream URL obtained via yt-dlp CLI`
+- `Playback started successfully via direct stream URL`
+
+### 3. `mpv exited with code 2`
+
+這通常表示：
+
+- `mpv` 收到的來源 URL 無法播放
+- `mpv` 直開 YouTube URL 時被 bot 驗證擋下
+- URL 過期或格式不支援
+
+**建議檢查順序：**
+
+1. 看前面是 `playUrl()` 還是 `play(videoId)`
+2. 如果是 `play(videoId)`，表示已經走到最後 fallback，通常代表前面的直連 URL 路徑也失敗了
+3. 如果是 `playUrl()`，把同一條 URL 拿去容器內直接測：
+
+```bash
+docker compose exec -T youtube-music-bot \
+  mpv --no-video "<DIRECT_STREAM_URL>"
+```
+
+### 4. `IPC connected successfully` 但之後沒有聲音
+
+這表示：
+
+- mpv 行程已經起來
+- IPC 已建立
+- 但不代表音訊一定真的成功播放到尾
+
+要繼續看後面的 log 是否出現：
+
+- `Property change {"name":"duration"...}`
+- `Property change {"name":"pause","data":false}`
+- `mpv process exited {"code":2...}`
+
+如果很快就 exit，通常還是來源 URL、音訊設備或 bot 驗證問題。
+
+### 5. `yt-dlp executable not found`
+
+表示容器或主機內沒有 `yt-dlp`。
+
+檢查：
+
+```bash
+docker compose exec -T youtube-music-bot which yt-dlp
+docker compose exec -T youtube-music-bot yt-dlp --version
+```
+
+本專案的 [Dockerfile](/Users/bs10081/Developer/youtube_music_bot/Dockerfile) 已經在 runtime image 中安裝 `yt-dlp`。
+
+### 6. JSON Parse error: `Expected '}'`
+
+這通常不是後端播放 bug，而是手動測 API 時 shell quoting 壞掉。
+
+如果要在 SSH 內測 API，建議直接用 Python 送 JSON，而不是在 shell 內手刻巢狀引號。
+
+### Debug 建議順序
+
+當「歌曲不會播放」時，建議按這個順序排查：
+
+1. 看服務是否正常啟動
+
+```bash
+docker compose ps
+docker compose logs --tail=120 youtube-music-bot
+```
+
+2. 看 `yt-dlp` 是否能拿到直連 URL
+
+```bash
+docker compose exec -T youtube-music-bot \
+  yt-dlp --no-warnings --no-playlist -g -f bestaudio/best \
+  --extractor-args "youtube:player_client=android_vr" \
+  "https://www.youtube.com/watch?v=<VIDEO_ID>"
+```
+
+3. 看 `mpv` 是否能播放直連 URL
+
+```bash
+docker compose exec -T youtube-music-bot mpv --no-video "<DIRECT_STREAM_URL>"
+```
+
+4. 看後端實際走的是哪條路
+
+你要在 log 中找到這幾個關鍵訊號：
+
+- `Fetching direct stream URL for playback`
+- `Primary stream extraction failed, trying yt-dlp CLI fallback`
+- `Stream URL obtained via yt-dlp CLI`
+- `Playback started successfully via direct stream URL`
+
+5. 如果還是不穩，再加入 cookies
+
+```yaml
+environment:
+  - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+  - YTDLP_COOKIES_FILE=/app/secrets/youtube-cookies.txt
+volumes:
+  - ./secrets:/app/secrets:ro
+```
+
 ### 存取 WebUI
 
 1. 開啟瀏覽器訪問 `http://localhost:3000`
@@ -288,7 +559,13 @@ environment:
 **請求範例**:
 ```json
 {
-  "videoId": "dQw4w9WgXcQ"
+  "track": {
+    "videoId": "dQw4w9WgXcQ",
+    "title": "Never Gonna Give You Up",
+    "artist": "Rick Astley",
+    "duration": 212,
+    "thumbnail": "https://..."
+  }
 }
 ```
 
@@ -429,7 +706,7 @@ MIT License
 YouTube API 返回的 `streaming_data` 中，`url`、`signature_cipher`、`cipher` 屬性皆為 `undefined`，導致無法直接獲取串流 URL。
 
 **影響**：
-- 目前使用 yt-dlp fallback 機制播放（延遲約 1.5 秒）
+- 目前多數情況會自動 fallback 到 `yt-dlp -g` 再交給 `mpv` 播放
 - 理想情況下直接使用 youtubei.js 提取的 URL 可減少延遲至約 0.5 秒
 
 **相關 Issue**：
@@ -437,7 +714,7 @@ YouTube API 返回的 `streaming_data` 中，`url`、`signature_cipher`、`ciphe
 
 **狀態**：等待 YouTube.js 更新修復
 
-**Workaround**：目前系統會自動 fallback 到 mpv + yt-dlp 解析，功能正常但延遲較高。
+**Workaround**：目前系統會自動 fallback 到 `yt-dlp -g` 取得直連音訊 URL；若還是失敗，最後才退回 mpv 直開 YouTube URL。
 
 ---
 
