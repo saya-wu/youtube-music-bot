@@ -175,11 +175,103 @@ npm run start
 
 本專案支援透過 Docker 部署到樹莓派，提供簡單的容器化部署方案。
 
+### 已提供的 Docker Hub 映像
+
+目前已經有預先建好的映像可直接使用：
+
+```bash
+bs10081/youtube-music-bot:latest
+```
+
+如果你只是想快速啟動，不需要自己先安裝 Bun、Node.js 或 buildx，直接 pull 這個 image 就可以。
+
 ### 前置需求
 
 - 樹莓派（推薦 64 位元系統，如 Raspberry Pi OS 64-bit）
 - Docker 和 Docker Compose 已安裝
 - 音頻設備正常運作
+
+### 新手快速開始
+
+#### 方式 0：直接用 `docker run`
+
+這是最快的方式，適合先確認服務有沒有正常跑起來。
+
+```bash
+docker run -d \
+  --name youtube-music-bot \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  --device /dev/snd:/dev/snd \
+  -e NODE_ENV=production \
+  -e LOG_LEVEL=INFO \
+  bs10081/youtube-music-bot:latest
+```
+
+啟動後直接開瀏覽器看：
+
+```bash
+http://<你的主機IP>:3000
+```
+
+查看日誌：
+
+```bash
+docker logs -f youtube-music-bot
+```
+
+停止與刪除：
+
+```bash
+docker stop youtube-music-bot
+docker rm youtube-music-bot
+```
+
+#### 方式 0-2：直接用 `docker compose`
+
+如果你比較習慣用 compose，先建立一份 `docker-compose.yml`：
+
+```yaml
+services:
+  youtube-music-bot:
+    image: bs10081/youtube-music-bot:latest
+    container_name: youtube-music-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    devices:
+      - /dev/snd:/dev/snd
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+      - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+```
+
+啟動：
+
+```bash
+docker compose up -d
+```
+
+更新到最新版本：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+如果之後遇到 YouTube anti-bot 變嚴，可以再加 cookies 掛載：
+
+```yaml
+services:
+  youtube-music-bot:
+    image: bs10081/youtube-music-bot:latest
+    volumes:
+      - ./secrets:/app/secrets:ro
+    environment:
+      - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+      - YTDLP_COOKIES_FILE=/app/secrets/youtube-cookies.txt
+```
 
 ### 部署方式
 
@@ -266,6 +358,8 @@ git push origin main
 
 **步驟 3：建置 ARM64 映像並推送到 Docker Hub**
 
+如果你本機已經有設定好 `buildx` builder，可以直接用下面這段：
+
 ```bash
 GIT_SHA=$(git rev-parse --short HEAD)
 
@@ -275,6 +369,13 @@ docker buildx build \
   -t bs10081/youtube-music-bot:$GIT_SHA \
   -t bs10081/youtube-music-bot:latest \
   --push .
+```
+
+如果你還沒有 builder，先建立一次：
+
+```bash
+docker buildx create --name multiplatform-builder --use
+docker buildx inspect --bootstrap
 ```
 
 **步驟 4：在樹莓派更新 compose 使用的 image tag**
@@ -521,6 +622,37 @@ environment:
 volumes:
   - ./secrets:/app/secrets:ro
 ```
+
+## GitHub Actions 自動建置 Docker Image
+
+專案已提供 GitHub Actions workflow 來自動建置 Docker image：
+
+- `push` 到 `main` 時：自動 build 並 push 到 Docker Hub
+- `pull_request` 時：只驗證 Dockerfile 能不能成功 build，不 push
+- `workflow_dispatch` 時：可手動觸發
+
+Workflow 檔案位置：
+
+- [.github/workflows/docker-image.yml](/Users/bs10081/Developer/youtube_music_bot/.github/workflows/docker-image.yml)
+
+### 需要設定的 GitHub Secrets
+
+到 GitHub repository 的 `Settings -> Secrets and variables -> Actions`，新增：
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+建議 `DOCKERHUB_TOKEN` 使用 Docker Hub 的 access token，不要直接用帳號密碼。
+
+### 自動產生的 tag 規則
+
+在 `main` 分支 push 時，workflow 會推這些標籤：
+
+- `latest`
+- `main`
+- `sha-<commit>`
+
+這樣正式環境可以固定拉 `latest`，也可以針對某次部署鎖定特定 SHA tag。
 
 ### 存取 WebUI
 
