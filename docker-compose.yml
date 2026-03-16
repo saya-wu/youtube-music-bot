@@ -8,6 +8,8 @@ services:
       - "3000:3000"
     devices:
       - /dev/snd:/dev/snd  # 音頻設備
+    group_add:
+      - audio
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
