@@ -40,7 +40,11 @@ export async function loadLibrarySnapshot(): Promise<LibrarySnapshot> {
   database.close();
 
   if (snapshot) {
-    return snapshot as LibrarySnapshot;
+    return {
+      ...(snapshot as LibrarySnapshot),
+      syncDeviceToken:
+        (snapshot as Partial<LibrarySnapshot>).syncDeviceToken ?? null,
+    };
   }
 
   const initialSnapshot = createInitialLibrarySnapshot();
@@ -87,6 +91,7 @@ export function createInitialLibrarySnapshot(): LibrarySnapshot {
     deviceId,
     updatedAt: now,
     syncSessionId: null,
+    syncDeviceToken: null,
     favorites: [],
     history: [],
     savedMixes: [],

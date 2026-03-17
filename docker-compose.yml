@@ -13,7 +13,10 @@ services:
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
+      - SYNC_STATE_DB_PATH=/data/sync-state.sqlite
       - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+    volumes:
+      - sync-state:/data
     labels:
       - com.centurylinklabs.watchtower.enable=true
     # 可選：如果需要 PulseAudio（取消註解以下配置）
@@ -29,3 +32,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 300 --cleanup --label-enable
+
+volumes:
+  sync-state:

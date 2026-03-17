@@ -1,6 +1,13 @@
 import type { ApiResponse, Track } from "@/types";
 import type { SyncSessionResponse } from "@/types/library";
 
+export interface SystemInfoResponse {
+  appVersion: string;
+  gitSha: string;
+  buildVersion: string;
+  environment: string;
+}
+
 const API_BASE = "/api";
 
 class ApiService {
@@ -19,12 +26,14 @@ class ApiService {
 
       if (!response.ok) {
         let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        let errorCode: string | undefined;
 
         try {
           const errorPayload = (await response.json()) as ApiResponse;
           if (errorPayload.error) {
             errorMessage = errorPayload.error;
           }
+          errorCode = errorPayload.code;
         } catch {
           // 保持預設 HTTP 錯誤訊息
         }
@@ -32,6 +41,7 @@ class ApiService {
         return {
           success: false,
           error: errorMessage,
+          code: errorCode,
         };
       }
 
@@ -149,6 +159,7 @@ class ApiService {
 
   async createSyncSession(payload: {
     sessionId?: string | null;
+    deviceToken?: string | null;
     profileId: string;
     device: {
       id: string;
@@ -200,6 +211,10 @@ class ApiService {
   // 取得當前狀態
   async getState(): Promise<ApiResponse<any>> {
     return this.request<any>("/state");
+  }
+
+  async getSystemInfo(): Promise<ApiResponse<SystemInfoResponse>> {
+    return this.request<SystemInfoResponse>("/system/info");
   }
 }
 

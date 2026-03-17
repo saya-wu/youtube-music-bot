@@ -46,6 +46,7 @@ interface LibraryStore {
     sessionId: string;
     profileId: string;
     devices: SyncSessionDevice[];
+    deviceToken: string;
     pairCode?: string | null;
   }) => Promise<void>;
   mergeRemoteSnapshot: (payload: SyncedLibraryPayload) => Promise<void>;
@@ -140,6 +141,7 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
         ...snapshot,
         profileId: session.profileId,
         syncSessionId: session.sessionId,
+        syncDeviceToken: session.deviceToken,
         pairedDevices: mergePairedDevices(
           snapshot.deviceId,
           snapshot.pairedDevices,
@@ -166,6 +168,7 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       (snapshot) => ({
         ...snapshot,
         syncSessionId: null,
+        syncDeviceToken: null,
         pairedDevices: snapshot.pairedDevices.filter((device) => device.isCurrentDevice),
       }),
       { touchUpdatedAt: false },

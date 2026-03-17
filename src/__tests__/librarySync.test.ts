@@ -11,6 +11,7 @@ const baseSnapshot: LibrarySnapshot = {
   deviceId: "device-a",
   updatedAt: "2026-03-15T00:00:00.000Z",
   syncSessionId: "session-a",
+  syncDeviceToken: "device-token-a",
   favorites: [],
   history: [],
   savedMixes: [],

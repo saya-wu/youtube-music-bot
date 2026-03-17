@@ -10,6 +10,8 @@
 - 📋 **播放清單**：查看和管理排隊中的歌曲
 - 📝 **同步歌詞**：即時顯示歌詞（支援 LRC 格式）
 - 🔄 **即時同步**：透過 WebSocket 即時更新所有客戶端的狀態
+- 💾 **持久化同步 Session**：容器重啟後保留配對關係，不需要重新配對
+- 🏷️ **版本可見性**：前端 Header 與後端 API 會顯示目前系統版本與 Git SHA
 
 ## 播放技術原理
 
@@ -244,7 +246,13 @@ services:
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
+      - SYNC_STATE_DB_PATH=/data/sync-state.sqlite
       - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+    volumes:
+      - sync-state:/data
+
+volumes:
+  sync-state:
 ```
 
 啟動：
@@ -259,6 +267,8 @@ docker compose up -d
 docker compose pull
 docker compose up -d
 ```
+
+`/data/sync-state.sqlite` 會保存同步 session 與裝置撤銷狀態，因此只要不要刪掉 volume，容器重啟或重新建立後都不需要重新配對。
 
 如果之後遇到 YouTube anti-bot 變嚴，可以再加 cookies 掛載：
 
@@ -338,6 +348,8 @@ docker compose logs -f
 #### 方式三：正式環境建議流程（GitHub + Docker Hub + 樹莓派）
 
 這是目前實際使用的部署方式，適合日常更新生產環境。
+
+如果你是第一次從舊版升級到 `0.2.0` 之後的版本，舊瀏覽器本地資料裡還沒有 `deviceToken`，現有同步裝置可能需要重新配對一次；完成一次後，後續容器重啟就不應再要求重新配對。
 
 **步驟 1：本地驗證**
 
@@ -709,6 +721,21 @@ Workflow 檔案位置：
 
 #### `GET /api/state`
 取得目前播放狀態。
+
+#### `GET /api/system/info`
+取得系統版本資訊，會回傳：
+
+```json
+{
+  "success": true,
+  "data": {
+    "appVersion": "0.2.0",
+    "gitSha": "abc1234",
+    "buildVersion": "0.2.0+abc1234",
+    "environment": "production"
+  }
+}
+```
 
 #### `GET /api/lyrics`
 取得目前歌曲的歌詞。

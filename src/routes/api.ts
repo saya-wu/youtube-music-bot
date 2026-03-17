@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import type { ApiResponse, Track } from "../types/index.ts";
 import { getMusicService } from "../services/music.service.ts";
 import { getQueueService } from "../services/queue.service.ts";
-import { getSyncService } from "../services/sync.service.ts";
+import {
+  getSyncService,
+  SyncServiceError,
+} from "../services/sync.service.ts";
+import { getAppMetadata } from "../utils/app-metadata.ts";
 import {
   getArtworkProxyHeaders,
   isAllowedArtworkUrl,
@@ -16,6 +20,41 @@ type SyncDeviceRequest = {
   name: string;
   kind: "desktop" | "mobile";
 };
+
+function toSyncErrorResponse(error: unknown): {
+  status: 404 | 409 | 500;
+  body: ApiResponse;
+} {
+  if (error instanceof SyncServiceError) {
+    if (error.code === "INVALID_PAIR_CODE") {
+      return {
+        status: 404,
+        body: {
+          success: false,
+          error: error.message,
+          code: error.code,
+        },
+      };
+    }
+
+    return {
+      status: error.code === "SYNC_SESSION_NOT_FOUND" ? 404 : 409,
+      body: {
+        success: false,
+        error: error.message,
+        code: error.code,
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      success: false,
+      error: "Failed to process sync request",
+    },
+  };
+}
 
 /**
  * GET /api/artwork-proxy?url={imageUrl}
@@ -273,6 +312,7 @@ api.post("/sync/session", async (c) => {
   try {
     const body = await c.req.json<{
       sessionId?: string | null;
+      deviceToken?: string | null;
       profileId: string;
       device: SyncDeviceRequest;
     }>();
@@ -293,10 +333,8 @@ api.post("/sync/session", async (c) => {
     });
   } catch (error) {
     console.error("Failed to create sync session:", error);
-    return c.json<ApiResponse>(
-      { success: false, error: "Failed to create sync session" },
-      500,
-    );
+    const response = toSyncErrorResponse(error);
+    return c.json<ApiResponse>(response.body, response.status);
   }
 });
 
@@ -327,13 +365,9 @@ api.post("/sync/pair", async (c) => {
       data: session,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to pair sync session";
-    const status = message === "Invalid pair code" ? 404 : 500;
     console.error("Failed to pair sync session:", error);
-    return c.json<ApiResponse>(
-      { success: false, error: message },
-      status,
-    );
+    const response = toSyncErrorResponse(error);
+    return c.json<ApiResponse>(response.body, response.status);
   }
 });
 
@@ -358,11 +392,8 @@ api.get("/sync/devices", (c) => {
       data: { devices },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load devices";
-    return c.json<ApiResponse>(
-      { success: false, error: message },
-      message === "Sync session not found" ? 404 : 500,
-    );
+    const response = toSyncErrorResponse(error);
+    return c.json<ApiResponse>(response.body, response.status);
   }
 });
 
@@ -388,11 +419,8 @@ api.delete("/sync/devices/:deviceId", (c) => {
       data: { message: "Device removed" },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to remove device";
-    return c.json<ApiResponse>(
-      { success: false, error: message },
-      message === "Sync session not found" ? 404 : 500,
-    );
+    const response = toSyncErrorResponse(error);
+    return c.json<ApiResponse>(response.body, response.status);
   }
 });
 
@@ -556,6 +584,17 @@ api.delete("/queue/:index", (c) => {
     );
   }
 });
+
+/**
+ * GET /api/system/info
+ * 取得系統版本資訊
+ */
+api.get("/system/info", (c) =>
+  c.json<ApiResponse>({
+    success: true,
+    data: getAppMetadata(),
+  }),
+);
 
 /**
  * GET /api/state

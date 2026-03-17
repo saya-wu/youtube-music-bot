@@ -1,12 +1,15 @@
 import { createServer } from './server.ts';
+import { getAppMetadata } from "./utils/app-metadata.ts";
 
 const server = createServer();
+const metadata = getAppMetadata();
 
 console.log(`
 ╔════════════════════════════════════════════╗
 ║  YouTube Music 點歌機器人 WebUI           ║
 ╚════════════════════════════════════════════╝
 
+🏷️  Version: ${metadata.buildVersion}
 🎵 Server running at: http://localhost:${server.port}
 🌐 WebSocket endpoint: ws://localhost:${server.port}/ws
 

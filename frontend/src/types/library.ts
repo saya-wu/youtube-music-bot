@@ -50,6 +50,7 @@ export interface LibrarySnapshot {
   deviceId: string;
   updatedAt: string;
   syncSessionId: string | null;
+  syncDeviceToken: string | null;
   favorites: FavoriteTrack[];
   history: HistoryEntry[];
   savedMixes: SavedMix[];
@@ -80,5 +81,6 @@ export interface SyncSessionResponse {
   sessionId: string;
   pairCode: string;
   profileId: string;
+  deviceToken: string;
   devices: SyncSessionDevice[];
 }

@@ -25,6 +25,7 @@ export function useLibrarySync(): void {
   const applySyncSession = useLibraryStore((state) => state.applySyncSession);
   const updatePairedDevices = useLibraryStore((state) => state.updatePairedDevices);
   const mergeRemoteSnapshot = useLibraryStore((state) => state.mergeRemoteSnapshot);
+  const removeSyncSession = useLibraryStore((state) => state.removeSyncSession);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -32,14 +33,19 @@ export function useLibrarySync(): void {
   const reconnectAttemptsRef = useRef(0);
   const lastSentPayloadRef = useRef<string | null>(null);
   const lastRegisteredSessionRef = useRef<string | null>(null);
+  const recoveryAttemptKeyRef = useRef<string | null>(null);
 
   const currentDevice = getCurrentDevice(snapshot);
   const currentDeviceId = currentDevice?.id ?? null;
   const currentDeviceName = currentDevice?.name ?? null;
   const currentDeviceKind = currentDevice?.kind ?? null;
+  const snapshotProfileId = snapshot?.profileId ?? "";
+  const snapshotSessionId = snapshot?.syncSessionId ?? null;
+  const snapshotDeviceToken = snapshot?.syncDeviceToken ?? null;
 
   const sendSnapshot = (
     nextSnapshot = useLibraryStore.getState().snapshot,
+    options: { force?: boolean } = {},
   ): void => {
     if (
       !nextSnapshot?.syncSessionId ||
@@ -51,7 +57,7 @@ export function useLibrarySync(): void {
     const payload = toSyncedLibraryPayload(nextSnapshot);
     const serializedPayload = JSON.stringify(payload);
 
-    if (serializedPayload === lastSentPayloadRef.current) {
+    if (!options.force && serializedPayload === lastSentPayloadRef.current) {
       return;
     }
 
@@ -77,11 +83,13 @@ export function useLibrarySync(): void {
       return;
     }
 
-    const sessionId = snapshot.syncSessionId;
-    const profileId = snapshot.profileId;
+    const sessionId = snapshotSessionId;
+    const deviceToken = snapshotDeviceToken;
+    const profileId = snapshotProfileId;
     const deviceId = currentDeviceId;
     const deviceName = currentDeviceName;
     const deviceKind = currentDeviceKind;
+    const recoveryKey = `${sessionId ?? "new"}:${deviceId}:${deviceToken ?? "none"}`;
 
     let cancelled = false;
 
@@ -90,6 +98,7 @@ export function useLibrarySync(): void {
 
       const response = await api.createSyncSession({
         sessionId,
+        deviceToken,
         profileId,
         device: {
           id: deviceId,
@@ -103,12 +112,28 @@ export function useLibrarySync(): void {
       }
 
       if (!response.success || !response.data) {
+        if (
+          sessionId &&
+          (response.code === "SYNC_SESSION_NOT_FOUND" ||
+            response.code === "SYNC_REPAIR_REQUIRED") &&
+          recoveryAttemptKeyRef.current !== recoveryKey
+        ) {
+          recoveryAttemptKeyRef.current = recoveryKey;
+          lastRegisteredSessionRef.current = null;
+          await removeSyncSession();
+          setSyncStatus("error", {
+            error: "同步裝置需要重新配對，已建立新的本機 session",
+          });
+          return;
+        }
+
         setSyncStatus("error", {
           error: response.error || "無法建立同步 session",
         });
         return;
       }
 
+      recoveryAttemptKeyRef.current = null;
       await applySyncSession({
         ...response.data,
         pairCode: response.data.pairCode,
@@ -126,15 +151,18 @@ export function useLibrarySync(): void {
     currentDeviceKind,
     currentDeviceName,
     ready,
+    removeSyncSession,
     setSyncStatus,
     snapshot?.profileId,
+    snapshot?.syncDeviceToken,
     snapshot?.syncSessionId,
   ]);
 
   useEffect(() => {
     if (
       !ready ||
-      !snapshot?.syncSessionId ||
+      !snapshotSessionId ||
+      !snapshotDeviceToken ||
       !currentDeviceId ||
       !currentDeviceName ||
       !currentDeviceKind
@@ -152,10 +180,11 @@ export function useLibrarySync(): void {
       ws.send(
         JSON.stringify({
           type: "sync_register",
-          sessionId: snapshot.syncSessionId,
+          sessionId: snapshotSessionId,
           deviceId: currentDeviceId,
           deviceName: currentDeviceName,
           deviceKind: currentDeviceKind,
+          deviceToken: snapshotDeviceToken,
         }),
       );
     };
@@ -170,7 +199,10 @@ export function useLibrarySync(): void {
             void applySyncSession({
               sessionId: String(message.sessionId ?? ""),
               pairCode: String(message.pairCode ?? ""),
-              profileId: String(message.profileId ?? snapshot.profileId),
+              profileId: String(message.profileId ?? snapshotProfileId ?? ""),
+              deviceToken: String(
+                message.deviceToken ?? snapshotDeviceToken ?? "",
+              ),
               devices: Array.isArray(message.devices)
                 ? (message.devices as SyncSessionDevice[])
                 : [],
@@ -179,7 +211,7 @@ export function useLibrarySync(): void {
               pairCode: String(message.pairCode ?? ""),
               error: null,
             });
-            sendSnapshot();
+            sendSnapshot(undefined, { force: true });
             break;
 
           case "sync_devices":
@@ -189,13 +221,22 @@ export function useLibrarySync(): void {
             break;
 
           case "sync_snapshot_request":
-            sendSnapshot();
+            sendSnapshot(undefined, { force: true });
             break;
 
           case "sync_snapshot":
             if (message.payload) {
               void mergeRemoteSnapshot(message.payload as SyncedLibraryPayload);
             }
+            break;
+
+          case "sync_revoked":
+            lastRegisteredSessionRef.current = null;
+            void removeSyncSession().then(() => {
+              setSyncStatus("error", {
+                error: "此裝置已被移出同步 session，請重新配對",
+              });
+            });
             break;
 
           case "sync_error":
@@ -221,7 +262,7 @@ export function useLibrarySync(): void {
         return;
       }
 
-      if (lastRegisteredSessionRef.current !== snapshot.syncSessionId) {
+      if (lastRegisteredSessionRef.current !== snapshotSessionId) {
         return;
       }
 
@@ -259,9 +300,11 @@ export function useLibrarySync(): void {
     currentDeviceName,
     mergeRemoteSnapshot,
     ready,
+    removeSyncSession,
     setSyncStatus,
-    snapshot?.profileId,
-    snapshot?.syncSessionId,
+    snapshotDeviceToken,
+    snapshotProfileId,
+    snapshotSessionId,
     socketAttempt,
     updatePairedDevices,
   ]);
@@ -269,7 +312,7 @@ export function useLibrarySync(): void {
   useEffect(() => {
     if (
       !ready ||
-      !snapshot?.syncSessionId ||
+      !snapshotSessionId ||
       !snapshot ||
       syncStatus !== "connected" ||
       socketRef.current?.readyState !== WebSocket.OPEN
@@ -292,5 +335,5 @@ export function useLibrarySync(): void {
         snapshotSyncTimeoutRef.current = null;
       }
     };
-  }, [ready, snapshot, syncStatus]);
+  }, [ready, snapshot, snapshotSessionId, syncStatus]);
 }

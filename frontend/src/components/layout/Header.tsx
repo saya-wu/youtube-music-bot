@@ -1,6 +1,11 @@
+import { useEffect, useState } from "react";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { Github, Music2, Search } from "lucide-react";
 import { useAppUiStore } from "@/stores/appUiStore";
+import { api, type SystemInfoResponse } from "@/services/api";
+import { frontendAppMetadata } from "@/lib/app-metadata";
+import { getVersionBadgeVariant } from "@/utils/version";
+import { Badge } from "@/components/ui/badge";
 
 interface HeaderProps {
   onSearchClick?: () => void;
@@ -9,6 +14,33 @@ interface HeaderProps {
 export const Header = ({ onSearchClick }: HeaderProps) => {
   const desktopMode = useAppUiStore((state) => state.desktopMode);
   const setDesktopMode = useAppUiStore((state) => state.setDesktopMode);
+  const [backendInfo, setBackendInfo] = useState<SystemInfoResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSystemInfo() {
+      const response = await api.getSystemInfo();
+      if (!cancelled && response.success && response.data) {
+        setBackendInfo(response.data);
+      }
+    }
+
+    void loadSystemInfo();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const versionBadgeVariant = getVersionBadgeVariant(
+    frontendAppMetadata.buildVersion,
+    backendInfo?.buildVersion,
+  );
+  const versionTooltip = [
+    `Frontend ${frontendAppMetadata.buildVersion}`,
+    `Backend ${backendInfo?.buildVersion ?? "loading..."}`,
+  ].join(" | ");
 
   return (
     <header className="border-b border-[color:var(--surface-border)] bg-[color:var(--surface-subtle)]/90 px-4 py-3 backdrop-blur-xl lg:px-6 lg:py-4">
@@ -19,10 +51,19 @@ export const Header = ({ onSearchClick }: HeaderProps) => {
             <Music2 className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-[var(--text-primary)] lg:text-[1.9rem]">
-              <span className="lg:hidden">🎵</span>{" "}
-              <span className="hidden sm:inline">YouTube Music Bot</span>
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-[var(--text-primary)] lg:text-[1.9rem]">
+                <span className="lg:hidden">🎵</span>{" "}
+                <span className="hidden sm:inline">YouTube Music Bot</span>
+              </h1>
+              <Badge
+                variant={versionBadgeVariant}
+                className="hidden sm:inline-flex"
+                title={versionTooltip}
+              >
+                v{frontendAppMetadata.appVersion}
+              </Badge>
+            </div>
             <p className="hidden text-sm text-[var(--text-secondary)] lg:block">
               Desktop jukebox with synced lyrics and live queue
             </p>
@@ -83,6 +124,14 @@ export const Header = ({ onSearchClick }: HeaderProps) => {
 
           {/* 連線狀態 */}
           <ConnectionStatus />
+
+          <Badge
+            variant={versionBadgeVariant}
+            className="sm:hidden"
+            title={versionTooltip}
+          >
+            v{frontendAppMetadata.appVersion}
+          </Badge>
         </div>
       </div>
     </header>

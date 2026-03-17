@@ -28,6 +28,7 @@ Thumbs.db
 
 # Local exploration and deployment artifacts
 .cache/
+.data/
 .codex/
 youtube-music-bot-arm64.tar
 youtube-music-cli-explore/

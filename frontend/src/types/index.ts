@@ -55,6 +55,7 @@ export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  code?: string;
 }
 
 // 連線狀態

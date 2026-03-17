@@ -1,6 +1,6 @@
 {
   "name": "youtube-music-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "YouTube Music 點歌機器人 WebUI",
   "type": "module",
   "scripts": {
@@ -11,8 +11,8 @@
     "build:all": "npm run build:frontend && npm run build",
     "start": "NODE_ENV=production bun run dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test": "bun test src/__tests__",
+    "test:watch": "bun test src/__tests__ --watch"
   },
   "dependencies": {
     "hono": "^4.6.17",

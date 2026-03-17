@@ -1,5 +1,8 @@
 import type { ServerWebSocket } from "bun";
-import { getSyncService } from "../services/sync.service.ts";
+import {
+  getSyncService,
+  SyncServiceError,
+} from "../services/sync.service.ts";
 
 export function handleSyncWebSocketOpen(_ws: ServerWebSocket<any>): void {
   // 等待客戶端送出 register 訊息
@@ -23,6 +26,7 @@ export function handleSyncWebSocketMessage(
             kind:
               data.deviceKind === "mobile" ? "mobile" : "desktop",
           },
+          deviceToken: String(data.deviceToken ?? ""),
         });
         break;
 
@@ -37,7 +41,19 @@ export function handleSyncWebSocketMessage(
       default:
         break;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof SyncServiceError) {
+      ws.send(
+        JSON.stringify({
+          type: "sync_revoked",
+          code: error.code,
+          error: error.message,
+        }),
+      );
+      ws.close();
+      return;
+    }
+
     ws.send(
       JSON.stringify({
         type: "sync_error",
