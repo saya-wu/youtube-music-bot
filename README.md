@@ -58,12 +58,6 @@ YTDLP_COOKIES_FILE="/app/secrets/youtube-cookies.txt"
 - `YTDLP_COOKIES_FILE`
   當 YouTube 對目前 IP 要求人類驗證時，可掛入已登入帳號匯出的 cookies 檔
 
-## 已知問題
-
-- 歌詞面板的「自動歸正到目前句中央」在重新整理頁面或重新回到瀏覽畫面後仍不穩定。
-- 目前切換到其他 tab（例如播放列表）再切回歌詞時，較容易重新對齊；這表示底層可見性 / layout 時序仍有待進一步修正。
-- 這個問題目前只先記錄狀態，尚未視為已修復功能。
-
 ## 系統架構
 
 ```
