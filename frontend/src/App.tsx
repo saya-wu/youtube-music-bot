@@ -9,6 +9,7 @@ import { useAppUiStore } from "@/stores/appUiStore";
 import { cn } from "@/lib/utils";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { LibraryView } from "@/components/library/LibraryView";
+import { AlbumDialog } from "@/components/album/AlbumDialog";
 import { PlaylistPickerDialog } from "@/components/library/PlaylistPickerDialog";
 import { SearchModal } from "@/components/search/SearchModal";
 import { PlayerSection } from "@/components/player/PlayerSection";
@@ -145,6 +146,7 @@ function App() {
         open={isSearchModalOpen}
         onOpenChange={setIsSearchModalOpen}
       />
+      <AlbumDialog />
       <PlaylistPickerDialog />
     </ToastProvider>
   );

@@ -1,6 +1,12 @@
 import { Innertube, Log, UniversalCache } from "youtubei.js";
 import { spawn } from "node:child_process";
-import type { Track, LyricLine, StreamUrlResult } from "../types/index.ts";
+import type {
+  AlbumDetails,
+  Track,
+  TrackAlbum,
+  LyricLine,
+  StreamUrlResult,
+} from "../types/index.ts";
 import { log } from "../utils/logger.ts";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
@@ -39,6 +45,31 @@ type MixPanelItem = {
   artists?: Array<{ name?: string }>;
   author?: string | { name?: string };
   duration?: number | { seconds?: number };
+};
+
+type MusicItemArtist = {
+  name?: string;
+};
+
+type MusicItemAlbum = {
+  id?: string;
+  name?: string;
+};
+
+type MusicItemThumbnail =
+  | string
+  | {
+      contents?: Array<{ url?: string | null }>;
+    }
+  | null;
+
+type MusicSearchItem = {
+  id?: string;
+  title?: string;
+  artists?: MusicItemArtist[];
+  album?: MusicItemAlbum;
+  duration?: number | { seconds?: number };
+  thumbnail?: MusicItemThumbnail;
 };
 
 function getMixTrackArtistName(item: MixPanelItem): string {
@@ -109,6 +140,149 @@ export function normalizeMixTracks(
   return tracks;
 }
 
+function getDurationSeconds(
+  duration: number | { seconds?: number } | undefined,
+): number {
+  if (typeof duration === "number") {
+    return duration;
+  }
+
+  return duration?.seconds || 0;
+}
+
+function getThumbnailUrl(
+  thumbnail: MusicItemThumbnail | undefined,
+  fallbackUrl?: string,
+): string | undefined {
+  if (typeof thumbnail === "string" && thumbnail.trim()) {
+    return thumbnail;
+  }
+
+  if (!thumbnail || typeof thumbnail !== "object") {
+    return fallbackUrl;
+  }
+
+  const url = thumbnail.contents
+    ?.find((item: { url?: string | null }) => item?.url?.trim())
+    ?.url?.trim();
+  return url || fallbackUrl;
+}
+
+function getAlbumSummary(album: MusicItemAlbum | undefined): TrackAlbum | undefined {
+  const albumId = album?.id?.trim();
+  const albumName = album?.name?.trim();
+
+  if (!albumId || !albumName) {
+    return undefined;
+  }
+
+  return {
+    id: albumId,
+    name: albumName,
+  };
+}
+
+export function normalizeMusicSearchItem(item: MusicSearchItem): Track | null {
+  const videoId = item.id?.trim();
+
+  if (!videoId) {
+    return null;
+  }
+
+  const fallbackThumbnail = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+
+  return {
+    videoId,
+    title: item.title || "Unknown",
+    artist: getItemArtistName(item.artists),
+    duration: getDurationSeconds(item.duration),
+    thumbnail: getThumbnailUrl(item.thumbnail, fallbackThumbnail),
+    album: getAlbumSummary(item.album),
+  };
+}
+
+function getItemArtistName(
+  artists: MusicItemArtist[] | undefined,
+  fallback: string = "Unknown",
+): string {
+  const names = artists
+    ?.map((artist) => artist?.name?.trim())
+    .filter((name): name is string => Boolean(name));
+
+  if (names && names.length > 0) {
+    return names.join(", ");
+  }
+
+  return fallback;
+}
+
+function getHeaderText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+
+  if (value && typeof value === "object") {
+    const maybeText = value as {
+      text?: unknown;
+      toString?: () => string;
+    };
+
+    if (typeof maybeText.text === "string") {
+      const normalized = maybeText.text.trim();
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    if (typeof maybeText.toString === "function") {
+      const normalized = maybeText.toString().trim();
+      if (normalized.length > 0 && normalized !== "[object Object]") {
+        return normalized;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function getHeaderAuthorName(header: unknown): string | undefined {
+  if (!header || typeof header !== "object") {
+    return undefined;
+  }
+
+  const authorName = (header as { author?: { name?: string } }).author?.name;
+  if (typeof authorName !== "string") {
+    return undefined;
+  }
+
+  const normalized = authorName.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function getHeaderThumbnailUrl(header: unknown): string | undefined {
+  if (!header || typeof header !== "object") {
+    return undefined;
+  }
+
+  const withThumbnail = header as {
+    thumbnail?: { contents?: Array<{ url?: string }> } | null;
+    thumbnails?: Array<{ url?: string }>;
+  };
+
+  const responsiveThumbnail = withThumbnail.thumbnail?.contents
+    ?.find((item) => item?.url?.trim())
+    ?.url?.trim();
+  if (responsiveThumbnail) {
+    return responsiveThumbnail;
+  }
+
+  const detailThumbnail = withThumbnail.thumbnails
+    ?.find((item) => item?.url?.trim())
+    ?.url?.trim();
+  return detailThumbnail || undefined;
+}
+
 // 解析 LRC 格式歌詞
 function parseLrc(lrc: string): LyricLine[] {
   const lines: LyricLine[] = [];
@@ -148,37 +322,10 @@ class MusicService {
       const contents = (musicSearch as any).songs?.contents || [];
 
       for (const item of contents) {
-        const videoId = item.id?.trim();
-        if (!videoId) continue;
+        const normalizedTrack = normalizeMusicSearchItem(item as MusicSearchItem);
+        if (!normalizedTrack) continue;
 
-        const artists = item.artists || [];
-        const artistName =
-          artists.length > 0
-            ? artists.map((a: any) => a.name).join(", ")
-            : "Unknown";
-
-        let thumbnailUrl = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
-        if (item.thumbnail) {
-          if (typeof item.thumbnail === "string") {
-            thumbnailUrl = item.thumbnail;
-          } else if (
-            item.thumbnail.contents &&
-            item.thumbnail.contents.length > 0
-          ) {
-            thumbnailUrl = item.thumbnail.contents[0].url;
-          }
-        }
-
-        tracks.push({
-          videoId,
-          title: item.title || "Unknown",
-          artist: artistName,
-          duration:
-            typeof item.duration === "number"
-              ? item.duration
-              : item.duration?.seconds || 0,
-          thumbnail: thumbnailUrl,
-        });
+        tracks.push(normalizedTrack);
       }
 
       // Fallback: 一般 YouTube 搜尋
@@ -270,6 +417,58 @@ class MusicService {
       });
       this.lyricsCache.set(cacheKey, []);
       return [];
+    }
+  }
+
+  async getAlbum(albumId: string): Promise<AlbumDetails | null> {
+    try {
+      const yt = await getClient();
+      const album = await yt.music.getAlbum(albumId);
+      const title = getHeaderText(album.header?.title) || "Unknown Album";
+      const tracks: Track[] = [];
+
+      for (const item of album.contents as MusicSearchItem[]) {
+        const videoId = item.id?.trim();
+
+        if (!videoId) {
+          continue;
+        }
+
+        const normalizedTrack: Track = {
+          videoId,
+          title: item.title || "Unknown",
+          artist: getItemArtistName(item.artists),
+          duration: getDurationSeconds(item.duration),
+          thumbnail:
+            getThumbnailUrl(item.thumbnail) ||
+            `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+          album: getAlbumSummary(item.album) ?? {
+            id: albumId,
+            name: title,
+          },
+        };
+
+        tracks.push(normalizedTrack);
+      }
+
+      return {
+        id: albumId,
+        title,
+        artist:
+          getHeaderAuthorName(album.header) ||
+          tracks[0]?.artist ||
+          "Unknown",
+        subtitle: getHeaderText(album.header?.subtitle),
+        trackSummary: getHeaderText(album.header?.second_subtitle),
+        thumbnail: getHeaderThumbnailUrl(album.header) || tracks[0]?.thumbnail,
+        tracks,
+      };
+    } catch (error) {
+      log.error("Failed to get album", {
+        error: error instanceof Error ? error.message : String(error),
+        albumId,
+      });
+      return null;
     }
   }
 

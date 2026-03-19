@@ -774,6 +774,101 @@ api.get("/system/info", (c) =>
 );
 
 /**
+ * GET /api/albums/:albumId
+ * 取得專輯與曲目資訊
+ */
+api.get("/albums/:albumId", async (c) => {
+  const albumId = normalizeText(c.req.param("albumId"));
+
+  if (!albumId) {
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "albumId is required",
+      },
+      400,
+    );
+  }
+
+  try {
+    const musicService = getMusicService();
+    const album = await musicService.getAlbum(albumId);
+
+    if (!album) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "Album not found",
+        },
+        404,
+      );
+    }
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: album,
+    });
+  } catch (error) {
+    console.error("Failed to get album:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to get album",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/albums/:albumId/queue
+ * 將整張專輯加入目前播放佇列
+ */
+api.post("/albums/:albumId/queue", async (c) => {
+  const albumId = normalizeText(c.req.param("albumId"));
+
+  if (!albumId) {
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "albumId is required",
+      },
+      400,
+    );
+  }
+
+  try {
+    const body = await c.req.json<{
+      tracks: Track[];
+      requestedBy?: Track["requestedBy"];
+    }>();
+
+    if (!Array.isArray(body.tracks) || body.tracks.length === 0) {
+      return c.json<ApiResponse>(
+        { success: false, error: "tracks is required" },
+        400,
+      );
+    }
+
+    const queueService = getQueueService();
+    await queueService.appendTracksToQueue(body.tracks, "manual", {
+      requestedBy: parseRequester(body.requestedBy),
+    });
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: { message: "Album added to queue" },
+    });
+  } catch (error) {
+    console.error("Failed to queue album:", error);
+    return c.json<ApiResponse>(
+      { success: false, error: "Failed to queue album" },
+      500,
+    );
+  }
+});
+
+/**
  * GET /api/state
  * 取得目前播放狀態
  */

@@ -5,6 +5,11 @@ export interface TrackRequester {
   profileName: string;
 }
 
+export interface TrackAlbum {
+  id: string;
+  name: string;
+}
+
 // 歌曲資訊
 export interface Track {
   videoId: string;
@@ -12,9 +17,20 @@ export interface Track {
   artist: string;
   duration: number; // 秒
   thumbnail?: string;
+  album?: TrackAlbum;
   requestedBy?: TrackRequester;
   queueOrigin?: QueueOrigin;
   radioGenerated?: boolean;
+}
+
+export interface AlbumDetails {
+  id: string;
+  title: string;
+  artist: string;
+  subtitle?: string;
+  trackSummary?: string;
+  thumbnail?: string;
+  tracks: Track[];
 }
 
 // 歌詞行

@@ -266,6 +266,58 @@ body {
     box-shadow 360ms ease;
 }
 
+.player-marquee {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.player-marquee-overflowing {
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 7%,
+    black 93%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 7%,
+    black 93%,
+    transparent 100%
+  );
+}
+
+.player-marquee-track {
+  display: inline-flex;
+  min-width: 100%;
+  align-items: center;
+  gap: 0;
+  white-space: nowrap;
+}
+
+.player-marquee-item {
+  flex-shrink: 0;
+  min-width: max-content;
+  padding-right: var(--marquee-gap, 32px);
+}
+
+.player-marquee-track-running {
+  animation: player-marquee-scroll var(--marquee-duration, 12s) linear infinite;
+}
+
+@keyframes player-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(calc(-1 * var(--marquee-distance, 0px)));
+  }
+}
+
 .surface-muted {
   background: var(--surface-muted);
   border-color: var(--surface-border);

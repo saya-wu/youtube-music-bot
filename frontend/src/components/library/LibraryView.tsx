@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Empty } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar } from "@/components/ui/avatar";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { api } from "@/services/api";
 import { formatTime } from "@/utils/format";
 import { formatDeviceDetail } from "@/utils/device-info";
@@ -129,14 +130,15 @@ export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
       `${entry.track.title} ${entry.track.artist}`.toLowerCase().includes(normalizedQuery),
     );
   }, [normalizedQuery, snapshot?.history]);
+  const snapshotProfileName = snapshot?.profileName;
 
   useEffect(() => {
-    if (!snapshot) {
+    if (snapshotProfileName == null) {
       return;
     }
 
-    setProfileNameInput(snapshot.profileName);
-  }, [snapshot?.profileName]);
+    setProfileNameInput(snapshotProfileName);
+  }, [snapshotProfileName]);
 
   if (!ready || !snapshot) {
     return (
@@ -347,7 +349,7 @@ export const LibraryView = ({ isMobile = false }: LibraryViewProps) => {
       onDropTrack={async (fromIndex, toIndex) => {
         await reorderPlaylistTracks(selectedPlaylist.id, fromIndex, toIndex);
       }}
-      onOpenAddTrack={openPlaylistPicker}
+      onQueueTrack={(track) => void handleAddTrackToQueue(track)}
       isEditing={editingPlaylistId === selectedPlaylist.id}
       onEditingChange={(isEditing) =>
         setEditingPlaylistId(isEditing ? selectedPlaylist.id : null)
@@ -1018,6 +1020,11 @@ const TrackBrowser = ({
                   >
                     {track.artist} · {formatTime(track.duration)}
                   </p>
+                  <OpenAlbumButton
+                    album={track.album}
+                    trackTitle={track.title}
+                    className="mt-1"
+                  />
                 </div>
               </div>
               <div
@@ -1093,14 +1100,22 @@ const SavedMixPanel = ({
   onDeleteMix: (mixId: string) => void | Promise<void>;
   mobile?: boolean;
 }) => (
-  <Card className="surface-card rounded-[30px] p-5">
-    <div className="mb-4">
+  <Card
+    className={cn(
+      "surface-card rounded-[30px] p-5",
+      !mobile && "flex h-full min-h-0 flex-col",
+    )}
+  >
+    <div className="mb-4 shrink-0">
       <h3 className="text-xl font-semibold text-[var(--text-primary)]">已儲存 Mix</h3>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">
         把喜歡的推薦組合留在這裡，之後可以快速重播。
       </p>
     </div>
-    <ScrollArea className="w-full" maxHeight={mobile ? "34vh" : "38vh"}>
+    <ScrollArea
+      className={cn("w-full", !mobile && "min-h-0 flex-1 pr-1")}
+      maxHeight={mobile ? "34vh" : undefined}
+    >
       <div className="grid gap-3">
         {savedMixes.length === 0 ? (
           <Empty title="尚未儲存 Mix" description="從搜尋建立 Mix 後，會自動保存在這裡。" />
@@ -1373,7 +1388,7 @@ interface PlaylistDetailProps {
   onDropTrack: (fromIndex: number, toIndex: number) => Promise<void>;
   onDragStart: (index: number | null) => void;
   onDragEnd: () => void;
-  onOpenAddTrack: (track: PlaylistTrackEntry["track"]) => void;
+  onQueueTrack: (track: PlaylistTrackEntry["track"]) => void;
   onEditingChange: (isEditing: boolean) => void;
 }
 
@@ -1390,7 +1405,7 @@ const PlaylistDetail = ({
   onDropTrack,
   onDragStart,
   onDragEnd,
-  onOpenAddTrack,
+  onQueueTrack,
   onEditingChange,
 }: PlaylistDetailProps) => {
   const [draftName, setDraftName] = useState(playlist.name);
@@ -1490,14 +1505,19 @@ const PlaylistDetail = ({
                 >
                   {entry.track.artist} · {formatTime(entry.track.duration)}
                 </p>
+                <OpenAlbumButton
+                  album={entry.track.album}
+                  trackTitle={entry.track.title}
+                  className="mt-1"
+                />
               </div>
               <div className="grid shrink-0 grid-cols-2 gap-2 md:w-[88px] md:justify-self-end">
                 <Button
                   variant="outline"
                   className="rounded-2xl px-0"
-                  onClick={() => onOpenAddTrack(entry.track)}
-                  aria-label={`加入歌單：${entry.track.title}`}
-                  title="加入歌單"
+                  onClick={() => onQueueTrack(entry.track)}
+                  aria-label={`加入播放佇列：${entry.track.title}`}
+                  title="加入播放佇列"
                 >
                   <Plus className="h-4 w-4" />
                 </Button>

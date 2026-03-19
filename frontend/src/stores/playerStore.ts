@@ -189,6 +189,8 @@ function areTracksEqual(left: Track | null, right: Track | null): boolean {
     left.artist === right.artist &&
     left.duration === right.duration &&
     left.thumbnail === right.thumbnail &&
+    left.album?.id === right.album?.id &&
+    left.album?.name === right.album?.name &&
     areRequestersEqual(left.requestedBy, right.requestedBy) &&
     left.queueOrigin === right.queueOrigin &&
     left.radioGenerated === right.radioGenerated

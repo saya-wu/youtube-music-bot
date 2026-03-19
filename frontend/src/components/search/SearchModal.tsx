@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
   const [isSearching, setIsSearching] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [creatingMixId, setCreatingMixId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const searchResults = usePlayerStore((state) => state.searchResults);
   const setSearchResults = usePlayerStore((state) => state.setSearchResults);
@@ -35,6 +36,26 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
     getCurrentRequester(state.snapshot),
   );
   const { showToast } = useToast();
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let firstFrameId = 0;
+    let secondFrameId = 0;
+
+    firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [open]);
 
   const handleSearch = async (query: string) => {
     setIsSearching(true);
@@ -48,7 +69,7 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
       } else {
         showToast({ message: response.error || "搜尋失敗", type: "error" });
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "搜尋發生錯誤", type: "error" });
     } finally {
       setIsSearching(false);
@@ -73,7 +94,7 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
         // 加入失敗時清除載入狀態
         usePlayerStore.getState().setLoadingTrack(false);
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "加入發生錯誤", type: "error" });
       // 發生錯誤時清除載入狀態
       usePlayerStore.getState().setLoadingTrack(false);
@@ -103,7 +124,7 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
         });
         usePlayerStore.getState().setLoadingTrack(false);
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "創建 Mix 發生錯誤", type: "error" });
       usePlayerStore.getState().setLoadingTrack(false);
     } finally {
@@ -132,6 +153,7 @@ export const SearchModal = ({ open, onOpenChange }: SearchModalProps) => {
             </DialogClose>
           </div>
           <SearchInput
+            ref={searchInputRef}
             onSearch={handleSearch}
             isLoading={isSearching}
             className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 lg:gap-5"

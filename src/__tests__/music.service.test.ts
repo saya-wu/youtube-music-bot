@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeMixTracks } from "../services/music.service.ts";
+import {
+  normalizeMixTracks,
+  normalizeMusicSearchItem,
+} from "../services/music.service.ts";
 
 describe("MusicService mix normalization", () => {
   test("should normalize valid mix items and apply field fallbacks", () => {
@@ -100,5 +103,42 @@ describe("MusicService mix normalization", () => {
       title: "Second valid",
       artist: "Fallback Artist",
     });
+  });
+
+  test("should normalize album metadata from music search items", () => {
+    const track = normalizeMusicSearchItem({
+      id: "album-track-1",
+      title: "Album Track",
+      artists: [{ name: "Album Artist" }],
+      album: {
+        id: "album-123",
+        name: "Album Name",
+      },
+      duration: { seconds: 242 },
+      thumbnail: {
+        contents: [{ url: "https://example.com/album-track.jpg" }],
+      },
+    });
+
+    expect(track).toEqual({
+      videoId: "album-track-1",
+      title: "Album Track",
+      artist: "Album Artist",
+      duration: 242,
+      thumbnail: "https://example.com/album-track.jpg",
+      album: {
+        id: "album-123",
+        name: "Album Name",
+      },
+    });
+  });
+
+  test("should skip music search items without a video id", () => {
+    expect(
+      normalizeMusicSearchItem({
+        title: "Missing Video Id",
+        artists: [{ name: "Unknown Artist" }],
+      }),
+    ).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { formatTime } from "@/utils/format";
 import type { Track } from "@/types";
 import { cn } from "@/lib/utils";
@@ -169,6 +170,11 @@ export const QueueItem = ({
           >
             {track.artist} • {formatTime(track.duration)}
           </p>
+          <OpenAlbumButton
+            album={track.album}
+            trackTitle={track.title}
+            className="mt-1"
+          />
           {requesterLabel ? (
             <p
               className={cn(

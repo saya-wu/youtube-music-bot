@@ -4,6 +4,11 @@ import { Github, Music2, Search } from "lucide-react";
 import { useAppUiStore } from "@/stores/appUiStore";
 import { api, type SystemInfoResponse } from "@/services/api";
 import { frontendAppMetadata } from "@/lib/app-metadata";
+import {
+  hasSeenReleaseNotes,
+  markReleaseNotesAsSeen,
+} from "@/lib/release-notes-storage";
+import { getReleaseNotesForVersion } from "@/data/release-notes";
 import { getVersionBadgeVariant } from "@/utils/version";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,6 +18,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface HeaderProps {
   onSearchClick?: () => void;
@@ -23,6 +29,7 @@ export const Header = ({ onSearchClick }: HeaderProps) => {
   const setDesktopMode = useAppUiStore((state) => state.setDesktopMode);
   const [backendInfo, setBackendInfo] = useState<SystemInfoResponse | null>(null);
   const [isVersionDialogOpen, setIsVersionDialogOpen] = useState(false);
+  const currentReleaseNotes = getReleaseNotesForVersion(frontendAppMetadata.appVersion);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +47,25 @@ export const Header = ({ onSearchClick }: HeaderProps) => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentReleaseNotes) {
+      return;
+    }
+
+    if (hasSeenReleaseNotes(currentReleaseNotes.version)) {
+      return;
+    }
+
+    markReleaseNotesAsSeen(currentReleaseNotes.version);
+    const openTimer = window.setTimeout(() => {
+      setIsVersionDialogOpen(true);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(openTimer);
+    };
+  }, [currentReleaseNotes]);
 
   const versionBadgeVariant = getVersionBadgeVariant(
     frontendAppMetadata.buildVersion,
@@ -146,37 +172,62 @@ export const Header = ({ onSearchClick }: HeaderProps) => {
       </header>
 
       <Dialog open={isVersionDialogOpen} onOpenChange={setIsVersionDialogOpen}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-md p-0">
-          <div className="relative p-6">
-            <DialogClose />
-            <div className="space-y-5 pr-10">
-              <div className="space-y-2">
-                <DialogTitle>版本資訊</DialogTitle>
-                <DialogDescription>
-                  目前畫面與 API 實際回報的 build 版本，可直接拿來追蹤部署內容。
+        <DialogContent className="flex max-h-[min(85vh,720px)] w-[calc(100vw-2rem)] max-w-md flex-col p-0">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-start justify-between gap-4 border-b border-[color:var(--surface-border)] p-6 pb-4">
+              <div className="min-w-0 flex-1 space-y-2">
+                <DialogTitle className="leading-snug">
+                  版本更新與建置資訊
+                </DialogTitle>
+                <DialogDescription className="leading-relaxed">
+                  可從標頭版本號隨時重新開啟，查看目前版本重點與部署追蹤資訊。
                 </DialogDescription>
               </div>
+              <DialogClose className="static right-auto top-auto shrink-0 self-start" />
+            </div>
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="space-y-5 px-6 pb-6 pt-4">
+                {currentReleaseNotes ? (
+                  <div className="space-y-3">
+                    <div className="surface-subtle rounded-2xl border border-[color:var(--surface-border)] p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                        Release Notes
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
+                        v{currentReleaseNotes.version} · {currentReleaseNotes.title}
+                      </p>
+                      <ul className="mt-3 space-y-2 text-sm text-[var(--text-secondary)]">
+                        {currentReleaseNotes.highlights.map((highlight) => (
+                          <li key={highlight} className="leading-relaxed">
+                            • {highlight}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
 
-              <div className="space-y-3">
-                <div className="surface-subtle rounded-2xl border border-[color:var(--surface-border)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                    Frontend
-                  </p>
-                  <p className="mt-2 break-all font-mono text-sm text-[var(--text-primary)]">
-                    {frontendAppMetadata.buildVersion}
-                  </p>
-                </div>
+                <div className="space-y-3">
+                  <div className="surface-subtle rounded-2xl border border-[color:var(--surface-border)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      Frontend
+                    </p>
+                    <p className="mt-2 break-all font-mono text-sm text-[var(--text-primary)]">
+                      {frontendAppMetadata.buildVersion}
+                    </p>
+                  </div>
 
-                <div className="surface-subtle rounded-2xl border border-[color:var(--surface-border)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                    Backend
-                  </p>
-                  <p className="mt-2 break-all font-mono text-sm text-[var(--text-primary)]">
-                    {backendInfo?.buildVersion ?? "loading..."}
-                  </p>
+                  <div className="surface-subtle rounded-2xl border border-[color:var(--surface-border)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      Backend
+                    </p>
+                    <p className="mt-2 break-all font-mono text-sm text-[var(--text-primary)]">
+                      {backendInfo?.buildVersion ?? "loading..."}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            </ScrollArea>
           </div>
         </DialogContent>
       </Dialog>

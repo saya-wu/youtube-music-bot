@@ -1,0 +1,354 @@
+import { useEffect, useMemo, useState } from "react";
+import { Heart, Library, Plus, X } from "lucide-react";
+import { api } from "@/services/api";
+import type { AlbumDetails, Track } from "@/types";
+import { getCurrentRequester, useLibraryStore } from "@/stores/libraryStore";
+import { useAlbumDialogStore } from "@/stores/albumDialogStore";
+import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Empty } from "@/components/ui/empty";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
+import { useToast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
+import { formatTime } from "@/utils/format";
+
+const EMPTY_FAVORITES: Array<{ videoId: string }> = [];
+
+export const AlbumDialog = () => {
+  const isOpen = useAlbumDialogStore((state) => state.isOpen);
+  const selectedAlbum = useAlbumDialogStore((state) => state.selectedAlbum);
+  const closeAlbum = useAlbumDialogStore((state) => state.closeAlbum);
+  const selectedAlbumId = selectedAlbum?.id ?? null;
+  const libraryReady = useLibraryStore((state) => state.ready);
+  const favorites = useLibraryStore(
+    (state) => state.snapshot?.favorites ?? EMPTY_FAVORITES,
+  );
+  const currentRequester = useLibraryStore((state) =>
+    getCurrentRequester(state.snapshot),
+  );
+  const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
+  const openPlaylistPicker = useLibraryStore((state) => state.openPlaylistPicker);
+  const { showToast } = useToast();
+  const [albumDetails, setAlbumDetails] = useState<AlbumDetails | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [addingTrackId, setAddingTrackId] = useState<string | null>(null);
+  const [isQueueingAlbum, setIsQueueingAlbum] = useState(false);
+  const [togglingFavoriteTrackId, setTogglingFavoriteTrackId] = useState<string | null>(
+    null,
+  );
+  const [reloadToken, setReloadToken] = useState(0);
+  const favoriteTrackIds = useMemo(
+    () => new Set(favorites.map((favorite) => favorite.videoId)),
+    [favorites],
+  );
+
+  useEffect(() => {
+    if (!isOpen || !selectedAlbumId) {
+      setAlbumDetails(null);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadAlbum(albumId: string) {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await api.getAlbum(albumId);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (response.success && response.data) {
+          setAlbumDetails(response.data);
+          return;
+        }
+
+        setAlbumDetails(null);
+        setError(response.error || "專輯資訊載入失敗");
+      } catch {
+        if (!cancelled) {
+          setAlbumDetails(null);
+          setError("專輯資訊載入失敗");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadAlbum(selectedAlbumId);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, reloadToken, selectedAlbumId]);
+
+  const handleAddToQueue = async (track: Track) => {
+    setAddingTrackId(track.videoId);
+
+    try {
+      const response = await api.addToQueue(track, currentRequester);
+      if (response.success) {
+        showToast({
+          message: `已加入播放佇列：${track.title}`,
+          type: "success",
+        });
+      } else {
+        showToast({
+          message: response.error || "加入播放佇列失敗",
+          type: "error",
+        });
+      }
+    } catch {
+      showToast({ message: "加入播放佇列失敗", type: "error" });
+    } finally {
+      setAddingTrackId(null);
+    }
+  };
+
+  const handleToggleFavorite = async (track: Track) => {
+    if (!libraryReady) {
+      showToast({ message: "媒體庫正在初始化", type: "info" });
+      return;
+    }
+
+    const wasFavorite = favoriteTrackIds.has(track.videoId);
+    setTogglingFavoriteTrackId(track.videoId);
+
+    try {
+      await toggleFavorite(track);
+      showToast({
+        message: wasFavorite ? "已移除收藏" : "已加入收藏",
+        type: "success",
+      });
+    } catch {
+      showToast({ message: "收藏更新失敗", type: "error" });
+    } finally {
+      setTogglingFavoriteTrackId((currentTrackId) =>
+        currentTrackId === track.videoId ? null : currentTrackId,
+      );
+    }
+  };
+
+  const handleAddToPlaylist = (track: Track) => {
+    if (!libraryReady) {
+      showToast({ message: "媒體庫正在初始化", type: "info" });
+      return;
+    }
+
+    openPlaylistPicker(track);
+  };
+
+  const handleQueueAlbum = async () => {
+    if (!albumDetails || albumDetails.tracks.length === 0) {
+      return;
+    }
+
+    setIsQueueingAlbum(true);
+
+    try {
+      const response = await api.queueAlbum(
+        albumDetails.id,
+        albumDetails.tracks,
+        currentRequester,
+      );
+
+      if (response.success) {
+        showToast({
+          message: `已加入整張專輯：${albumDetails.title}`,
+          type: "success",
+        });
+      } else {
+        showToast({
+          message: response.error || "加入整張專輯失敗",
+          type: "error",
+        });
+      }
+    } catch {
+      showToast({ message: "加入整張專輯失敗", type: "error" });
+    } finally {
+      setIsQueueingAlbum(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && closeAlbum()}>
+      <DialogContent className="flex h-[min(90vh,920px)] w-[min(96vw,980px)] max-w-[980px] flex-col p-0">
+        <div className="border-b border-[color:var(--surface-border)] px-6 pb-5 pt-6 lg:px-8 lg:pb-6 lg:pt-7">
+          <div className="mb-5 flex items-start justify-between gap-6">
+            <div className="min-w-0">
+              <DialogTitle className="text-[2rem] font-semibold tracking-tight">
+                {albumDetails?.title || selectedAlbum?.name || "專輯"}
+              </DialogTitle>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                {albumDetails?.artist || "正在載入專輯資訊"}
+                {albumDetails?.trackSummary ? ` · ${albumDetails.trackSummary}` : ""}
+              </p>
+            </div>
+            <DialogClose
+              className="static shrink-0 rounded-full p-4"
+              aria-label="關閉專輯"
+            >
+              <X className="h-6 w-6" />
+            </DialogClose>
+          </div>
+
+          <div className="flex flex-col gap-4 rounded-[28px] border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <Avatar
+                src={albumDetails?.thumbnail}
+                alt={albumDetails?.title || selectedAlbum?.name || "專輯"}
+                size="lg"
+                className="h-24 w-24 rounded-[24px] border border-[color:var(--surface-border)]"
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                  Album
+                </p>
+                <p className="mt-2 text-xl font-semibold text-[var(--text-primary)]">
+                  {albumDetails?.title || selectedAlbum?.name || "專輯"}
+                </p>
+                {albumDetails?.subtitle ? (
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                    {albumDetails.subtitle}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <Button
+              className="h-11 rounded-2xl px-4 sm:shrink-0"
+              onClick={() => void handleQueueAlbum()}
+              disabled={!albumDetails || albumDetails.tracks.length === 0 || isQueueingAlbum}
+            >
+              <Plus className="h-4 w-4" />
+              {isQueueingAlbum ? "加入中..." : "整張專輯加入佇列"}
+            </Button>
+          </div>
+        </div>
+
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="p-6 pt-4 lg:px-8 lg:pb-8">
+            {isLoading ? (
+              <div className="flex justify-center py-12">
+                <Spinner size="lg" />
+              </div>
+            ) : error ? (
+              <div className="surface-subtle rounded-[28px] border border-[color:var(--surface-border)] p-6 text-center">
+                <p className="text-base font-semibold text-[var(--text-primary)]">
+                  專輯目前無法載入
+                </p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {error}
+                </p>
+                <Button
+                  className="mt-4 rounded-2xl"
+                  onClick={() => setReloadToken((value) => value + 1)}
+                >
+                  重新載入
+                </Button>
+              </div>
+            ) : albumDetails && albumDetails.tracks.length > 0 ? (
+              <div className="space-y-3">
+                {albumDetails.tracks.map((track, index) => {
+                  const isFavorite = favoriteTrackIds.has(track.videoId);
+                  const isTogglingFavorite = togglingFavoriteTrackId === track.videoId;
+
+                  return (
+                    <div
+                      key={`${track.videoId}-${index}`}
+                      className="surface-card grid items-center gap-4 rounded-[24px] border px-4 py-4 md:grid-cols-[auto_minmax(0,1fr)_auto]"
+                    >
+                      <div className="flex items-center gap-4">
+                        <span className="w-5 text-center text-sm font-semibold text-[var(--text-muted)]">
+                          {index + 1}
+                        </span>
+                        <Avatar
+                          src={track.thumbnail}
+                          alt={track.title}
+                          size="md"
+                          className="rounded-2xl"
+                        />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p
+                          className="truncate text-base font-semibold text-[var(--text-primary)]"
+                          title={track.title}
+                        >
+                          {track.title}
+                        </p>
+                        <p
+                          className="mt-1 truncate text-sm text-[var(--text-secondary)]"
+                          title={`${track.artist} · ${formatTime(track.duration)}`}
+                        >
+                          {track.artist} · {formatTime(track.duration)}
+                        </p>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <div className="grid w-max max-w-full justify-items-stretch gap-2">
+                          <div className="grid grid-cols-[max-content_max-content] justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "h-10 rounded-2xl px-3",
+                                isFavorite &&
+                                  "border-[color:var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]",
+                              )}
+                              onClick={() => void handleToggleFavorite(track)}
+                              disabled={isTogglingFavorite}
+                            >
+                              <Heart
+                                className="h-4 w-4"
+                                fill={isFavorite ? "currentColor" : "none"}
+                              />
+                              {isTogglingFavorite
+                                ? "處理中..."
+                                : isFavorite
+                                  ? "已收藏"
+                                  : "收藏"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="h-10 rounded-2xl px-3"
+                              onClick={() => handleAddToPlaylist(track)}
+                            >
+                              <Library className="h-4 w-4" />
+                              加入歌單
+                            </Button>
+                          </div>
+                          <Button
+                            className="h-10 w-full rounded-2xl px-4"
+                            onClick={() => void handleAddToQueue(track)}
+                            disabled={addingTrackId === track.videoId}
+                          >
+                            <Plus className="h-4 w-4" />
+                            {addingTrackId === track.videoId ? "加入中..." : "加入佇列"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty
+                title="這張專輯暫時沒有可顯示的曲目"
+                description="稍後再試一次，或換一張專輯看看。"
+              />
+            )}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+};

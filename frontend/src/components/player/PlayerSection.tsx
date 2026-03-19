@@ -5,6 +5,7 @@ import { PlaybackControls } from "./PlaybackControls";
 import { VolumeControl } from "./VolumeControl";
 import { usePlayerStore } from "@/stores/playerStore";
 import { cn } from "@/lib/utils";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime } from "@/utils/format";
 import { RadioToggleButton } from "./RadioToggleButton";
@@ -142,9 +143,14 @@ export const PlayerSection = ({
                         >
                           {nextTrack.artist}
                         </p>
+                        <OpenAlbumButton
+                          album={nextTrack.album}
+                          trackTitle={nextTrack.title}
+                          className="mt-1"
+                        />
                         {nextTrack.requestedBy?.profileName?.trim() ? (
                           <p
-                            className="truncate text-xs text-[var(--text-muted)]"
+                            className="mt-1 truncate text-xs text-[var(--text-muted)]"
                             title={`點歌者：${nextTrack.requestedBy.profileName}`}
                           >
                             點歌者：{nextTrack.requestedBy.profileName}

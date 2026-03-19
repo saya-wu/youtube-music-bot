@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { formatTime } from "@/utils/format";
 import type { Track } from "@/types";
 import { Library, Plus, Shuffle } from "lucide-react";
@@ -40,12 +41,17 @@ export const SearchResultItem = ({
           <p className="line-clamp-2 text-base text-[var(--text-secondary)] lg:text-lg">
             {result.artist}
           </p>
+          <OpenAlbumButton
+            album={result.album}
+            trackTitle={result.title}
+            className="text-sm"
+          />
           <div className="flex flex-wrap items-center gap-2 pt-1 text-sm text-[var(--text-muted)]">
             <span className="rounded-full border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] px-3 py-1">
               {formatTime(result.duration)}
             </span>
             <span className="hidden text-[var(--text-muted)] xl:inline">
-              可直接加入佇列、收藏到歌單或建立推薦流
+              可直接加入佇列、查看專輯、收藏到歌單或建立推薦流
             </span>
           </div>
         </div>

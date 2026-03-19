@@ -2,10 +2,12 @@ import { AnimatedAvatar } from "@/components/ui/animated-avatar";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { usePlayerStore } from "@/stores/playerStore";
 import { useLibraryStore } from "@/stores/libraryStore";
 import { cn } from "@/lib/utils";
 import { Heart, Library, Search, Sparkles } from "lucide-react";
+import { MarqueeText } from "./MarqueeText";
 
 const EMPTY_FAVORITES: Array<{ videoId: string }> = [];
 
@@ -161,6 +163,8 @@ export const NowPlaying = ({
     (favorite) => favorite.videoId === currentTrack.videoId,
   );
   const isSidebarCompact = compact && sidebarMode;
+  const shouldUseTickerTitle = compact;
+  const shouldUseTickerMeta = compact;
   const requesterLabel = currentTrack.requestedBy?.profileName?.trim() || null;
 
   return (
@@ -203,28 +207,47 @@ export const NowPlaying = ({
             className={cn(
               "text-[var(--text-primary)]",
               isSidebarCompact
-                ? "line-clamp-2 text-[1.9rem] font-semibold tracking-tight xl:text-[2.2rem]"
+                ? "text-[1.9rem] font-semibold tracking-tight xl:text-[2.2rem]"
                 : compact
-                ? "line-clamp-2 text-[2.2rem] font-semibold tracking-tight lg:text-[2.35rem] xl:text-[2.8rem]"
+                ? "text-[2.2rem] font-semibold tracking-tight lg:text-[2.35rem] xl:text-[2.8rem]"
                 : "line-clamp-2 text-3xl font-semibold tracking-tight lg:text-[2.4rem] xl:text-[2.6rem]",
             )}
             title={currentTrack.title}
           >
-            {currentTrack.title}
+            {shouldUseTickerTitle ? (
+              <MarqueeText text={currentTrack.title} className="block whitespace-nowrap" />
+            ) : (
+              currentTrack.title
+            )}
           </h2>
           <p
             className={cn(
-              "truncate text-[var(--text-secondary)]",
+              "text-[var(--text-secondary)]",
               isSidebarCompact
                 ? "text-base xl:text-lg"
                 : compact
                   ? "text-lg lg:text-xl"
                   : "text-lg lg:text-lg xl:text-xl",
+              !shouldUseTickerMeta && "truncate",
             )}
             title={currentTrack.artist}
           >
-            {currentTrack.artist}
+            {shouldUseTickerMeta ? (
+              <MarqueeText text={currentTrack.artist} className="block whitespace-nowrap" />
+            ) : (
+              currentTrack.artist
+            )}
           </p>
+          <OpenAlbumButton
+            album={currentTrack.album}
+            trackTitle={currentTrack.title}
+            useMarquee={shouldUseTickerMeta}
+            className={cn(
+              shouldUseTickerMeta && "w-full",
+              compact ? "text-sm" : "text-xs",
+              isSidebarCompact && "text-xs",
+            )}
+          />
           {requesterLabel ? (
             <p
               className={cn(

@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/avatar";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
 import { Empty } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -45,7 +46,7 @@ export const MobileContent = () => {
       } else {
         showToast({ message: response.error || "搜尋失敗", type: "error" });
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "搜尋發生錯誤", type: "error" });
     } finally {
       setIsSearching(false);
@@ -61,7 +62,7 @@ export const MobileContent = () => {
       } else {
         showToast({ message: response.error || "加入失敗", type: "error" });
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "加入發生錯誤", type: "error" });
     } finally {
       setAddingId(null);
@@ -81,7 +82,7 @@ export const MobileContent = () => {
       } else {
         showToast({ message: response.error || "建立 Mix 失敗", type: "error" });
       }
-    } catch (error) {
+    } catch {
       showToast({ message: "建立 Mix 發生錯誤", type: "error" });
     } finally {
       setCreatingMixId(null);
@@ -189,6 +190,11 @@ const MobileSearchResultCard = ({
           <p className="truncate text-xs text-[var(--text-secondary)]">
             {result.artist}
           </p>
+          <OpenAlbumButton
+            album={result.album}
+            trackTitle={result.title}
+            className="mt-1"
+          />
           <p className="mt-0.5 text-xs text-[var(--text-muted)]">
             {formatTime(result.duration)}
           </p>
