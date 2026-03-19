@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { usePlayerStore } from "@/stores/playerStore";
 import type { WSMessage } from "@/types";
+import { mergePlaybackStateDuringTrackTransition } from "@/utils/playbackStateTransition";
 
 export const useWebSocket = () => {
   const wsRef = useRef<WebSocket | null>(null);
@@ -32,39 +33,11 @@ export const useWebSocket = () => {
           }
 
           const previousState = usePlayerStore.getState().playbackState;
-          const shouldPreserveCurrentTrack =
-            message.state.currentTrack === null &&
-            message.state.queue.length > 0 &&
-            previousState.currentTrack !== null;
-          const queueHead = message.state.queue[0] ?? null;
-          const mergedPreservedTrack =
-            shouldPreserveCurrentTrack &&
-            queueHead &&
-            previousState.currentTrack &&
-            queueHead.videoId === previousState.currentTrack.videoId
-              ? {
-                  ...previousState.currentTrack,
-                  requestedBy:
-                    queueHead.requestedBy ??
-                    previousState.currentTrack.requestedBy,
-                }
-              : previousState.currentTrack;
-
           setPlaybackState(
-            shouldPreserveCurrentTrack
-              ? {
-                  ...message.state,
-                  currentTrack: mergedPreservedTrack,
-                  position:
-                    message.state.position > 0
-                      ? message.state.position
-                      : previousState.position,
-                  duration:
-                    message.state.duration > 0
-                      ? message.state.duration
-                      : previousState.duration,
-                }
-              : message.state,
+            mergePlaybackStateDuringTrackTransition(
+              message.state,
+              previousState,
+            ),
           );
           break;
         }
