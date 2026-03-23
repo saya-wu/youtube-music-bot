@@ -134,7 +134,7 @@ export const CrossfadeControl = ({
             Crossfade
           </p>
           <p className="text-xs leading-5 text-[var(--text-secondary)]">
-            下一首會先預加載。開啟後，歌曲尾段會以音量交疊方式切換。
+            下一首會先預加載，切換時會保留目前歌曲尾段，並和下一首平順淡入淡出。
           </p>
         </div>
         <Button
