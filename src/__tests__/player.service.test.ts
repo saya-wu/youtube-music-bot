@@ -1,15 +1,45 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import {
   __resetPlayerServiceForTests,
   getPlayerService,
 } from "../services/player.service.ts";
 
+type RestorableMethod = {
+  target: Record<string, unknown>;
+  key: string;
+  original: unknown;
+};
+
+const restores: RestorableMethod[] = [];
+
+function stubMethod<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  replacement: T[K],
+): void {
+  restores.push({
+    target: target as Record<string, unknown>,
+    key: key as string,
+    original: target[key],
+  });
+  target[key] = replacement;
+}
+
+function restoreMethods(): void {
+  while (restores.length > 0) {
+    const restore = restores.pop()!;
+    restore.target[restore.key] = restore.original;
+  }
+}
+
 function createSession(process: ChildProcess) {
   return {
     id: 1,
     purpose: "active" as const,
     source: { type: "stream" as const, value: "https://example.com/audio" },
+    volumeMultiplier: 1,
+    targetVolume: 70,
     process,
     ipcSocket: null,
     ipcPath: "/tmp/test-mpv.sock",
@@ -25,8 +55,14 @@ describe("PlayerService - seek functionality", () => {
   let playerService: ReturnType<typeof getPlayerService>;
 
   beforeEach(() => {
+    restoreMethods();
     __resetPlayerServiceForTests();
     playerService = getPlayerService();
+  });
+
+  afterEach(() => {
+    restoreMethods();
+    __resetPlayerServiceForTests();
   });
 
   describe("seek() method", () => {
@@ -180,6 +216,25 @@ describe("PlayerService - seek functionality", () => {
   });
 
   describe("playback confirmation", () => {
+    test("should use the supported mpv volume-max option", () => {
+      const fakeProcess = {} as ChildProcess;
+      const session = createSession(fakeProcess);
+      const player = playerService as unknown as {
+        buildMpvArgs: (
+          session: ReturnType<typeof createSession>,
+          options: { volume: number; startPaused: boolean },
+        ) => string[];
+      };
+
+      const args = player.buildMpvArgs(session, {
+        volume: 70,
+        startPaused: false,
+      });
+
+      expect(args).toContain("--volume-max=200");
+      expect(args).not.toContain("--softvol-max=200");
+    });
+
     test("should wait for a positive time-pos before confirming playback", () => {
       const fakeProcess = {
         kill: mock(() => true),
@@ -281,6 +336,45 @@ describe("PlayerService - seek functionality", () => {
       expect(settle).toHaveBeenCalledTimes(1);
       expect(settle).toHaveBeenCalledWith(true);
       expect(reject).not.toHaveBeenCalled();
+    });
+
+    test("should clear playback state when session startup fails", async () => {
+      const fakeProcess = {
+        kill: mock(() => true),
+      } as unknown as ChildProcess;
+      const session = createSession(fakeProcess);
+      const player = playerService as unknown as {
+        spawnSession: (
+          options: {
+            source: { type: "youtube" | "stream"; value: string };
+            purpose: "active" | "standby" | "retiring";
+            trackId?: string | null;
+            startPaused?: boolean;
+            volume?: number;
+            volumeMultiplier?: number;
+            confirmMode: "playback" | "preload";
+          },
+        ) => {
+          session: ReturnType<typeof createSession>;
+          ready: Promise<boolean>;
+        };
+        activeSession: ReturnType<typeof createSession> | null;
+      };
+
+      stubMethod(
+        player,
+        "spawnSession",
+        (() => ({
+          session,
+          ready: Promise.reject(new Error("mpv executable not found")),
+        })) as typeof player.spawnSession,
+      );
+
+      await expect(playerService.play("track-1")).rejects.toThrow(
+        "mpv executable not found",
+      );
+      expect(playerService.isCurrentlyPlaying()).toBe(false);
+      expect(player.activeSession).toBeNull();
     });
   });
 });

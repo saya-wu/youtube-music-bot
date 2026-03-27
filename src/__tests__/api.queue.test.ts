@@ -207,3 +207,52 @@ describe("/api/queue/batch", () => {
     });
   });
 });
+
+describe("DELETE /api/queue", () => {
+  beforeEach(() => {
+    restoreMethods();
+    __resetQueueServiceForTests();
+  });
+
+  afterEach(() => {
+    restoreMethods();
+    __resetQueueServiceForTests();
+  });
+
+  test("should clear the current queue and return the cleared count", async () => {
+    const queueService = getQueueService();
+
+    stubMethod(queueService, "clearQueue", (() => 5) as typeof queueService.clearQueue);
+
+    const response = await api.request("/queue", {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      data: {
+        message: "Queue cleared",
+        count: 5,
+      },
+    });
+  });
+
+  test("should surface queue clear failures as 500 responses", async () => {
+    const queueService = getQueueService();
+
+    stubMethod(queueService, "clearQueue", (() => {
+      throw new Error("clear failed");
+    }) as typeof queueService.clearQueue);
+
+    const response = await api.request("/queue", {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: "Failed to clear queue",
+    });
+  });
+});

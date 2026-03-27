@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { ApiResponse, PlaybackSettings, Track } from "../types/index.ts";
 import { getMusicService } from "../services/music.service.ts";
 import { getQueueService } from "../services/queue.service.ts";
+import { getDiscoverService } from "../services/discover.service.ts";
+import { getReleaseNotesService } from "../services/release-notes.service.ts";
 import {
   getSyncService,
   type SyncDeviceInput,
@@ -91,6 +93,14 @@ function parseRequester(value: unknown): Track["requestedBy"] | undefined {
     profileId,
     profileName,
   };
+}
+
+function recordDiscoverTrackRequests(tracks: Track[]): void {
+  try {
+    getDiscoverService().recordTrackRequests(tracks);
+  } catch (error) {
+    console.error("Failed to record discover track requests:", error);
+  }
 }
 
 function toSyncErrorResponse(error: unknown): {
@@ -266,6 +276,7 @@ api.post("/queue", async (c) => {
     await queueService.addToQueue(body.track, {
       requestedBy: parseRequester(body.requestedBy),
     });
+    recordDiscoverTrackRequests([body.track]);
 
     return c.json<ApiResponse>({
       success: true,
@@ -319,6 +330,7 @@ api.post("/queue/batch", async (c) => {
     await queueService.appendTracksToQueue(normalizedTracks, "manual", {
       requestedBy: parseRequester(body.requestedBy),
     });
+    recordDiscoverTrackRequests(normalizedTracks);
 
     return c.json<ApiResponse>({
       success: true,
@@ -361,6 +373,7 @@ api.post("/mix", async (c) => {
     const tracks = await queueService.createMixFromTrack(body.track, {
       requestedBy: parseRequester(body.requestedBy),
     });
+    recordDiscoverTrackRequests([body.track]);
 
     return c.json<ApiResponse>({
       success: true,
@@ -782,6 +795,34 @@ api.post("/library/playlists/:playlistId/queue", async (c) => {
 });
 
 /**
+ * DELETE /api/queue
+ * 清空待播佇列
+ */
+api.delete("/queue", (c) => {
+  try {
+    const queueService = getQueueService();
+    const count = queueService.clearQueue();
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: {
+        message: "Queue cleared",
+        count,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to clear queue:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to clear queue",
+      },
+      500,
+    );
+  }
+});
+
+/**
  * DELETE /api/queue/:index
  * 從播放清單移除歌曲
  */
@@ -830,6 +871,237 @@ api.get("/system/info", (c) =>
 );
 
 /**
+ * GET /api/system/release-notes
+ * 從 GitHub Releases 取得版本說明，必要時 fallback 到本機資料
+ */
+api.get("/system/release-notes", async (c) => {
+  try {
+    const metadata = getAppMetadata();
+    const releaseNotes = await getReleaseNotesService().getReleaseNotes(
+      metadata.appVersion,
+    );
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: releaseNotes,
+    });
+  } catch (error) {
+    console.error("Failed to load release notes:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to load release notes",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * GET /api/discover/markets
+ * 取得可用市場與本站熱門點播
+ */
+api.get("/discover/markets", (c) => {
+  try {
+    const discoverService = getDiscoverService();
+    return c.json<ApiResponse>({
+      success: true,
+      data: discoverService.getMarketsResponse(),
+    });
+  } catch (error) {
+    console.error("Failed to get discover markets:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to load discover markets",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * GET /api/discover/feed?market=TW&mood={moodKey}
+ * 取得指定市場的 Discover feed
+ */
+api.get("/discover/feed", async (c) => {
+  try {
+    const market = c.req.query("market");
+    const mood = c.req.query("mood");
+    const discoverService = getDiscoverService();
+    const feed = await discoverService.getFeed(market, mood);
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: feed,
+    });
+  } catch (error) {
+    console.error("Failed to get discover feed:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to load discover feed",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/discover/track/queue
+ * 將 Discover 單曲加入播放佇列
+ */
+api.post("/discover/track/queue", async (c) => {
+  try {
+    const body = await c.req.json<{
+      track: Track;
+      requestedBy?: Track["requestedBy"];
+    }>();
+
+    if (!body.track?.videoId) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "track is required",
+        },
+        400,
+      );
+    }
+
+    const queueService = getQueueService();
+    await queueService.addToQueue(body.track, {
+      requestedBy: parseRequester(body.requestedBy),
+    });
+    recordDiscoverTrackRequests([body.track]);
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: { message: "Discover track added to queue" },
+    });
+  } catch (error) {
+    console.error("Failed to queue discover track:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to queue discover track",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/discover/collection/queue
+ * 將 Discover 專輯或播放清單加入播放佇列
+ */
+api.post("/discover/collection/queue", async (c) => {
+  try {
+    const body = await c.req.json<{
+      kind: "album" | "playlist";
+      id: string;
+      requestedBy?: Track["requestedBy"];
+    }>();
+
+    const collectionId = normalizeText(body.id);
+    if (!collectionId || (body.kind !== "album" && body.kind !== "playlist")) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "kind and id are required",
+        },
+        400,
+      );
+    }
+
+    const musicService = getMusicService();
+    const tracks =
+      body.kind === "album"
+        ? (await musicService.getAlbum(collectionId))?.tracks ?? []
+        : await musicService.getPlaylistTracks(collectionId);
+
+    if (tracks.length === 0) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "Collection could not be resolved",
+        },
+        404,
+      );
+    }
+
+    const queueService = getQueueService();
+    await queueService.appendTracksToQueue(tracks, "manual", {
+      requestedBy: parseRequester(body.requestedBy),
+    });
+    recordDiscoverTrackRequests(tracks);
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: {
+        message: `Added ${tracks.length} tracks to queue`,
+        count: tracks.length,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to queue discover collection:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to queue discover collection",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * GET /api/playlists/:playlistId
+ * 取得播放清單與曲目資訊
+ */
+api.get("/playlists/:playlistId", async (c) => {
+  const playlistId = normalizeText(c.req.param("playlistId"));
+
+  if (!playlistId) {
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "playlistId is required",
+      },
+      400,
+    );
+  }
+
+  try {
+    const musicService = getMusicService();
+    const playlist = await musicService.getPlaylistDetails(playlistId);
+
+    if (!playlist) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "Playlist not found",
+        },
+        404,
+      );
+    }
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: playlist,
+    });
+  } catch (error) {
+    console.error("Failed to get playlist:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to get playlist",
+      },
+      500,
+    );
+  }
+});
+
+/**
  * GET /api/albums/:albumId
  * 取得專輯與曲目資訊
  */
@@ -870,6 +1142,53 @@ api.get("/albums/:albumId", async (c) => {
       {
         success: false,
         error: "Failed to get album",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * GET /api/artists/:artistId
+ * 取得歌手頁資訊
+ */
+api.get("/artists/:artistId", async (c) => {
+  const artistId = normalizeText(c.req.param("artistId"));
+
+  if (!artistId) {
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "artistId is required",
+      },
+      400,
+    );
+  }
+
+  try {
+    const musicService = getMusicService();
+    const artist = await musicService.getArtistDetails(artistId);
+
+    if (!artist) {
+      return c.json<ApiResponse>(
+        {
+          success: false,
+          error: "Artist not found",
+        },
+        404,
+      );
+    }
+
+    return c.json<ApiResponse>({
+      success: true,
+      data: artist,
+    });
+  } catch (error) {
+    console.error("Failed to get artist:", error);
+    return c.json<ApiResponse>(
+      {
+        success: false,
+        error: "Failed to get artist",
       },
       500,
     );
@@ -1085,12 +1404,19 @@ api.post("/volume", async (c) => {
  */
 api.post("/playback/settings", async (c) => {
   try {
-    const body = await c.req.json<PlaybackSettings>();
+    const body = await c.req.json<Partial<PlaybackSettings>>();
 
     if (
-      typeof body.crossfadeEnabled !== "boolean" ||
-      typeof body.crossfadeDurationSeconds !== "number" ||
-      !Number.isFinite(body.crossfadeDurationSeconds)
+      (body.crossfadeEnabled !== undefined &&
+        typeof body.crossfadeEnabled !== "boolean") ||
+      (body.crossfadeDurationSeconds !== undefined &&
+        (typeof body.crossfadeDurationSeconds !== "number" ||
+          !Number.isFinite(body.crossfadeDurationSeconds))) ||
+      (body.volumeNormalizationEnabled !== undefined &&
+        typeof body.volumeNormalizationEnabled !== "boolean") ||
+      (body.crossfadeEnabled === undefined &&
+        body.crossfadeDurationSeconds === undefined &&
+        body.volumeNormalizationEnabled === undefined)
     ) {
       return c.json<ApiResponse>(
         {

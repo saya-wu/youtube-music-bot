@@ -2,6 +2,12 @@ import { Innertube, Log, UniversalCache } from "youtubei.js";
 import { spawn } from "node:child_process";
 import type {
   AlbumDetails,
+  ArtistDetails,
+  ArtistSection,
+  DiscoverCollectionItem,
+  DiscoverItem,
+  DiscoverTrackItem,
+  PlaylistDetails,
   Track,
   TrackAlbum,
   LyricLine,
@@ -24,6 +30,11 @@ import {
   type ParsedYouTubeUrl,
   type ParsedYouTubeCollection,
 } from "../utils/youtube-url.ts";
+
+export interface TrackLoudnessInfo {
+  loudnessDb?: number;
+  perceptualLoudnessDb?: number;
+}
 
 // 確保緩存目錄存在
 const cacheDir = join(process.cwd(), ".cache", "youtubei");
@@ -129,6 +140,23 @@ type YtDlpMetadata = {
   playlist_count?: number | string;
 };
 
+type PlayerAudioConfig = {
+  loudness_db?: number;
+  perceptual_loudness_db?: number;
+  loudnessDb?: number;
+  perceptualLoudnessDb?: number;
+};
+
+type MusicEntityArtist = {
+  name?: string;
+  channel_id?: string;
+  endpoint?: {
+    payload?: {
+      browseId?: string;
+    };
+  };
+};
+
 function getMixTrackArtistName(item: MixPanelItem): string {
   if (Array.isArray(item.artists)) {
     const names = item.artists
@@ -153,6 +181,44 @@ function getMixTrackArtistName(item: MixPanelItem): string {
   }
 
   return "Unknown";
+}
+
+function getFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function extractTrackLoudnessInfo(info: any): TrackLoudnessInfo | null {
+  const audioConfig: PlayerAudioConfig | undefined =
+    info?.player_config?.audio_config ||
+    info?.playerConfig?.audioConfig ||
+    info?.raw_player_response?.playerConfig?.audioConfig ||
+    info?.page?.player_config?.audio_config;
+
+  if (!audioConfig) {
+    return null;
+  }
+
+  const loudnessDb =
+    getFiniteNumber(audioConfig.loudness_db) ??
+    getFiniteNumber(audioConfig.loudnessDb);
+  const perceptualLoudnessDb =
+    getFiniteNumber(audioConfig.perceptual_loudness_db) ??
+    getFiniteNumber(audioConfig.perceptualLoudnessDb);
+
+  if (loudnessDb === undefined && perceptualLoudnessDb === undefined) {
+    return null;
+  }
+
+  return {
+    ...(loudnessDb !== undefined ? { loudnessDb } : {}),
+    ...(perceptualLoudnessDb !== undefined
+      ? { perceptualLoudnessDb }
+      : {}),
+  };
 }
 
 export function normalizeMixTracks(
@@ -317,6 +383,142 @@ function getHeaderAuthorName(header: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function getBrowseIdFromEndpointLike(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const directBrowseId = (value as { browseId?: unknown }).browseId;
+  if (typeof directBrowseId === "string" && directBrowseId.trim()) {
+    return directBrowseId.trim();
+  }
+
+  const endpointBrowseId = (
+    value as {
+      endpoint?: {
+        payload?: {
+          browseId?: unknown;
+        };
+      };
+      navigationEndpoint?: {
+        browseEndpoint?: {
+          browseId?: unknown;
+        };
+      };
+    }
+  ).endpoint?.payload?.browseId;
+  if (typeof endpointBrowseId === "string" && endpointBrowseId.trim()) {
+    return endpointBrowseId.trim();
+  }
+
+  const navigationBrowseId = (
+    value as {
+      endpoint?: {
+        payload?: {
+          browseId?: unknown;
+        };
+      };
+      navigationEndpoint?: {
+        browseEndpoint?: {
+          browseId?: unknown;
+        };
+      };
+    }
+  ).navigationEndpoint?.browseEndpoint?.browseId;
+  if (typeof navigationBrowseId === "string" && navigationBrowseId.trim()) {
+    return navigationBrowseId.trim();
+  }
+
+  return undefined;
+}
+
+function getArtistReferenceFromEntity(
+  value: unknown,
+): { name?: string; id?: string } {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return {
+    name:
+      getHeaderText((value as { name?: unknown }).name) ||
+      getHeaderText(
+        value as {
+          title?: unknown;
+          text?: unknown;
+        },
+      ),
+    id: getBrowseIdFromEndpointLike(value),
+  };
+}
+
+function pickArtistReference(
+  ...references: Array<{ name?: string; id?: string }>
+): { name?: string; id?: string } {
+  for (const reference of references) {
+    if (reference.name || reference.id) {
+      return reference;
+    }
+  }
+
+  return {};
+}
+
+function getPrimaryArtistReference(
+  artists: Array<MusicEntityArtist | null | undefined> | undefined,
+  fallback: { name?: string; id?: string } = {},
+): { name?: string; id?: string } {
+  for (const artist of artists || []) {
+    const name = getHeaderText(artist?.name);
+    const id = getBrowseIdFromEndpointLike(artist);
+
+    if (name || id) {
+      return {
+        name,
+        id,
+      };
+    }
+  }
+
+  return fallback;
+}
+
+function getAlbumHeaderArtistReference(
+  header: unknown,
+): { name?: string; id?: string } {
+  if (!header || typeof header !== "object") {
+    return {};
+  }
+
+  const authorReference = getArtistReferenceFromEntity(
+    (header as { author?: unknown }).author,
+  );
+  if (authorReference.name || authorReference.id) {
+    return authorReference;
+  }
+
+  const straplineReference = getArtistReferenceFromEntity(
+    (header as {
+      strapline_text_one?: unknown;
+      straplineTextOne?: unknown;
+    }).strapline_text_one,
+  );
+  if (straplineReference.name || straplineReference.id) {
+    return straplineReference;
+  }
+
+  return getArtistReferenceFromEntity(
+    (header as {
+      strapline_text_one?: unknown;
+      straplineTextOne?: unknown;
+    }).straplineTextOne,
+  );
+}
+
+function getAlbumHeaderArtistName(header: unknown): string | undefined {
+  return getAlbumHeaderArtistReference(header).name;
+}
+
 function getHeaderThumbnailUrl(header: unknown): string | undefined {
   if (!header || typeof header !== "object") {
     return undefined;
@@ -358,6 +560,145 @@ function getThumbnailFromList(
   }
 
   return getThumbnailUrl(thumbnails, fallbackUrl);
+}
+
+function createArtistTrackItem(track: Track): DiscoverTrackItem {
+  return {
+    kind: "track",
+    id: track.videoId,
+    title: track.title,
+    artist: track.artist,
+    artistId: track.artistId,
+    thumbnail: track.thumbnail,
+    duration: track.duration,
+    track,
+  };
+}
+
+function createArtistCollectionItem(input: {
+  kind: "album" | "playlist";
+  id: string;
+  title: string;
+  artist: string;
+  artistId?: string;
+  thumbnail?: string;
+  trackCount?: number;
+  subtitle?: string;
+}): DiscoverCollectionItem {
+  return {
+    kind: input.kind,
+    id: input.id,
+    title: input.title,
+    artist: input.artist,
+    artistId: input.artistId,
+    thumbnail: input.thumbnail,
+    trackCount: input.trackCount,
+    subtitle: input.subtitle,
+  };
+}
+
+function normalizeArtistSectionId(title: string, index: number): string {
+  return `artist-${title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-")}-${index}`;
+}
+
+function normalizeArtistSectionItem(
+  item: any,
+  fallbackArtist: { name: string; id?: string },
+): DiscoverItem | null {
+  const itemType = getHeaderText(item?.item_type || item?.itemType)?.toLowerCase();
+  const title = getHeaderText(item?.title) || getHeaderText(item?.name);
+  const id = getHeaderText(item?.id);
+
+  if (!title || !id) {
+    return null;
+  }
+
+  const thumbnail =
+    getThumbnailFromList(item?.thumbnail, undefined) ||
+    getThumbnailFromList(item?.thumbnails, undefined);
+
+  if (
+    itemType === "song" ||
+    itemType === "video" ||
+    itemType === "non_music_track"
+  ) {
+    const artistReference = pickArtistReference(
+      getPrimaryArtistReference(item?.artists),
+      getPrimaryArtistReference(item?.authors),
+      getArtistReferenceFromEntity(item?.author),
+    );
+    const track: Track = {
+      videoId: id,
+      title,
+      artist: artistReference.name || fallbackArtist.name || "Unknown",
+      artistId: artistReference.id || fallbackArtist.id,
+      duration: getDurationSeconds(item?.duration),
+      thumbnail: thumbnail || getVideoThumbnail(id),
+      album:
+        item?.album?.id && item?.album?.name
+          ? {
+              id: item.album.id,
+              name: item.album.name,
+            }
+          : undefined,
+    };
+
+    return createArtistTrackItem(track);
+  }
+
+  if (itemType === "album" || itemType === "playlist") {
+    const authorReference = pickArtistReference(
+      getPrimaryArtistReference(item?.artists),
+      getArtistReferenceFromEntity(item?.author),
+    );
+    const subtitle = [
+      getHeaderText(item?.subtitle),
+      getHeaderText(item?.year),
+    ]
+      .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+      .join(" • ");
+
+    return createArtistCollectionItem({
+      kind: itemType,
+      id,
+      title,
+      artist: authorReference.name || fallbackArtist.name || "Unknown",
+      artistId: authorReference.id || fallbackArtist.id,
+      thumbnail,
+      trackCount: parseCountValue(item?.item_count),
+      subtitle: subtitle || undefined,
+    });
+  }
+
+  return null;
+}
+
+function normalizeArtistSection(
+  section: any,
+  index: number,
+  fallbackArtist: { name: string; id?: string },
+): ArtistSection | null {
+  const title = getHeaderText(section?.header?.title) || getHeaderText(section?.title);
+  if (!title) {
+    return null;
+  }
+
+  const items = (section?.contents || [])
+    .map((item: any) => normalizeArtistSectionItem(item, fallbackArtist))
+    .filter((item: DiscoverItem | null): item is DiscoverItem => Boolean(item));
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    id: normalizeArtistSectionId(title, index),
+    title,
+    subtitle:
+      getHeaderText(section?.header?.strapline) ||
+      getHeaderText(section?.bottom_text),
+    items,
+  };
 }
 
 function getAuthorName(
@@ -588,22 +929,22 @@ function normalizeTrackFromYtDlpEntry(
   };
 }
 
-function parseCountValue(value: string | number | undefined): number | null {
+function parseCountValue(value: string | number | undefined): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
 
   if (typeof value !== "string") {
-    return null;
+    return undefined;
   }
 
   const digits = value.replace(/[^\d]/g, "");
   if (!digits) {
-    return null;
+    return undefined;
   }
 
   const count = Number.parseInt(digits, 10);
-  return Number.isFinite(count) ? count : null;
+  return Number.isFinite(count) ? count : undefined;
 }
 
 function dedupeSearchResults(results: SearchResult[]): SearchResult[] {
@@ -648,6 +989,11 @@ const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1000;
 class MusicService {
   private searchCache = new Map<string, SearchResult[]>();
   private lyricsCache = new Map<string, LyricLine[]>();
+  private trackLoudnessCache = new Map<string, TrackLoudnessInfo | null>();
+  private trackLoudnessInFlight = new Map<
+    string,
+    Promise<TrackLoudnessInfo | null>
+  >();
   private streamUrlCache = new Map<
     string,
     { result: StreamUrlResult; expiresAt: number }
@@ -791,6 +1137,51 @@ class MusicService {
         return null;
       }
     }
+  }
+
+  async getTrackLoudness(videoId: string): Promise<TrackLoudnessInfo | null> {
+    const normalizedVideoId = videoId.trim();
+    if (!normalizedVideoId) {
+      return null;
+    }
+
+    if (this.trackLoudnessCache.has(normalizedVideoId)) {
+      const cached = this.trackLoudnessCache.get(normalizedVideoId);
+      return cached ? { ...cached } : null;
+    }
+
+    const inFlight = this.trackLoudnessInFlight.get(normalizedVideoId);
+    if (inFlight) {
+      const result = await inFlight;
+      return result ? { ...result } : null;
+    }
+
+    const request = (async () => {
+      try {
+        const yt = await getClient();
+        const info = await yt.getBasicInfo(normalizedVideoId);
+        const loudnessInfo = extractTrackLoudnessInfo(info);
+
+        this.trackLoudnessCache.set(
+          normalizedVideoId,
+          loudnessInfo ? { ...loudnessInfo } : null,
+        );
+
+        return loudnessInfo ? { ...loudnessInfo } : null;
+      } catch (error) {
+        log.warn("Failed to load track loudness metadata", {
+          error: error instanceof Error ? error.message : String(error),
+          videoId: normalizedVideoId,
+        });
+        return null;
+      } finally {
+        this.trackLoudnessInFlight.delete(normalizedVideoId);
+      }
+    })();
+
+    this.trackLoudnessInFlight.set(normalizedVideoId, request);
+    const result = await request;
+    return result ? { ...result } : null;
   }
 
   private async getCollectionSearchResult(
@@ -1015,6 +1406,9 @@ class MusicService {
       const yt = await getClient();
       const album = await yt.music.getAlbum(albumId);
       const title = getHeaderText(album.header?.title) || "Unknown Album";
+      const headerArtistReference = getAlbumHeaderArtistReference(album.header);
+      const headerArtist = headerArtistReference.name;
+      const albumThumbnail = getHeaderThumbnailUrl(album.header);
       const tracks: Track[] = [];
 
       for (const item of album.contents as MusicSearchItem[]) {
@@ -1026,10 +1420,12 @@ class MusicService {
 
         const normalizedTrack: Track = {
           videoId,
-          title: item.title || "Unknown",
-          artist: getItemArtistName(item.artists),
+          title: getHeaderText(item.title) || "Unknown",
+          artist: getItemArtistName(item.artists, headerArtist || "Unknown"),
+          artistId: headerArtistReference.id,
           duration: getDurationSeconds(item.duration),
           thumbnail:
+            albumThumbnail ||
             getThumbnailUrl(item.thumbnail) ||
             `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
           album: getAlbumSummary(item.album) ?? {
@@ -1041,16 +1437,19 @@ class MusicService {
         tracks.push(normalizedTrack);
       }
 
+      const albumArtist =
+        headerArtist ||
+        tracks.find((track) => track.artist !== "Unknown")?.artist ||
+        "Unknown";
+
       return {
         id: albumId,
         title,
-        artist:
-          getHeaderAuthorName(album.header) ||
-          tracks[0]?.artist ||
-          "Unknown",
+        artist: albumArtist,
+        artistId: headerArtistReference.id,
         subtitle: getHeaderText(album.header?.subtitle),
         trackSummary: getHeaderText(album.header?.second_subtitle),
-        thumbnail: getHeaderThumbnailUrl(album.header) || tracks[0]?.thumbnail,
+        thumbnail: albumThumbnail || tracks[0]?.thumbnail,
         tracks,
       };
     } catch (error) {
@@ -1059,6 +1458,190 @@ class MusicService {
         albumId,
       });
       return null;
+    }
+  }
+
+  async getArtistDetails(artistId: string): Promise<ArtistDetails | null> {
+    try {
+      const yt = await getClient();
+      const artist = await yt.music.getArtist(artistId);
+      const artistHeader = artist.header as {
+        thumbnail?: ThumbnailLike;
+        thumbnails?: Array<{ url?: string | null }>;
+        description?: unknown;
+        subscription_button?: {
+          subscribe_accessibility_label?: string;
+        };
+      } | null;
+      const name = getHeaderText(artist.header?.title) || "Unknown Artist";
+      const fallbackArtist = {
+        id: artistId,
+        name,
+      };
+      const sections = (artist.sections || [])
+        .map((section: any, index: number) =>
+          normalizeArtistSection(section, index, fallbackArtist),
+        )
+        .filter((section: ArtistSection | null): section is ArtistSection =>
+          Boolean(section),
+        );
+      const heroImage =
+        getHeaderThumbnailUrl(artistHeader) ||
+        getThumbnailFromList(artistHeader?.thumbnail);
+      const thumbnail =
+        getThumbnailFromList(artistHeader?.thumbnail, heroImage) ||
+        getThumbnailFromList(artistHeader?.thumbnails, heroImage) ||
+        heroImage;
+      const subscriptionLabel =
+        artistHeader?.subscription_button?.subscribe_accessibility_label;
+      const subscriberCount = subscriptionLabel
+        ?.replace(/^.*?(\d[\d.,萬KMB\s]*)$/, "$1")
+        ?.trim();
+
+      return {
+        id: artistId,
+        name,
+        description: getHeaderText(artistHeader?.description),
+        subscriberCount:
+          subscriberCount && subscriberCount !== subscriptionLabel
+            ? subscriberCount
+            : undefined,
+        thumbnail,
+        heroImage,
+        sections,
+      };
+    } catch (error) {
+      log.error("Failed to get artist details", {
+        error: error instanceof Error ? error.message : String(error),
+        artistId,
+      });
+      return null;
+    }
+  }
+
+  async getPlaylistDetails(
+    playlistId: string,
+    limit: number = 200,
+  ): Promise<PlaylistDetails | null> {
+    try {
+      const yt = await getClient();
+      const playlist = await yt.getPlaylist(playlistId);
+      const info = playlist.info as {
+        title?: unknown;
+        author?: unknown;
+        thumbnails?: Array<{ url?: string | null }>;
+        total_items?: string | number;
+        subtitle?: unknown;
+      };
+      const title = getHeaderText(info.title) || "Unknown Playlist";
+      const authorReference = getArtistReferenceFromEntity(info.author);
+      const tracks = playlist.items
+        .map((item) =>
+          normalizePlaylistTrack(
+            item as unknown as {
+              id?: string;
+              title?: unknown;
+              author?: unknown;
+              thumbnails?: Array<{ url?: string | null }>;
+              duration?: { seconds?: number };
+              is_playable?: boolean;
+            },
+          ),
+        )
+        .filter((track): track is Track => Boolean(track));
+
+      if (tracks.length === 0) {
+        return null;
+      }
+
+      const totalCount = parseCountValue(info.total_items) ?? tracks.length;
+      const limitedTracks = tracks.slice(0, limit);
+      const resolvedCount = Math.max(totalCount, limitedTracks.length);
+
+      return {
+        id: playlistId,
+        title,
+        artist: resolveCollectionArtist({
+          kind: "playlist",
+          author: info.author,
+          subtitle: info.subtitle,
+          fallbackTrackArtist: limitedTracks[0]?.artist,
+        }),
+        artistId: authorReference.id,
+        subtitle: getHeaderText(info.subtitle),
+        trackSummary: `${resolvedCount} 首歌曲`,
+        thumbnail: getThumbnailFromList(
+          info.thumbnails,
+          limitedTracks[0]?.thumbnail,
+        ),
+        tracks: limitedTracks,
+        truncated:
+          playlist.has_continuation ||
+          totalCount > limit ||
+          tracks.length > limit,
+      };
+    } catch (error) {
+      log.error("Failed to get playlist details", {
+        error: error instanceof Error ? error.message : String(error),
+        playlistId,
+      });
+      return null;
+    }
+  }
+
+  async getPlaylistTracks(playlistId: string): Promise<Track[]> {
+    try {
+      const yt = await getClient();
+      const playlist = await yt.getPlaylist(playlistId);
+      const tracks = playlist.items
+        .map((item) =>
+          normalizePlaylistTrack(
+            item as unknown as {
+              id?: string;
+              title?: unknown;
+              author?: unknown;
+              thumbnails?: Array<{ url?: string | null }>;
+              duration?: { seconds?: number };
+              is_playable?: boolean;
+            },
+          ),
+        )
+        .filter((track): track is Track => Boolean(track));
+
+      if (tracks.length > 0) {
+        return tracks;
+      }
+    } catch (error) {
+      log.warn("Failed to resolve playlist via youtubei.js, trying yt-dlp metadata fallback", {
+        error: error instanceof Error ? error.message : String(error),
+        playlistId,
+      });
+    }
+
+    try {
+      const normalizedPlaylistId = playlistId.replace(/^VL/, "");
+      const metadata = await this.getYtDlpMetadata(
+        `https://music.youtube.com/playlist?list=${normalizedPlaylistId}`,
+        {
+          flatPlaylist: true,
+          maxPlaylistItems: 200,
+        },
+      );
+
+      return (metadata.entries || [])
+        .map((entry) =>
+          entry ? normalizeTrackFromYtDlpEntry(entry) : null,
+        )
+        .filter((track): track is Track => Boolean(track));
+    } catch (fallbackError) {
+      log.error("Failed to resolve playlist metadata", {
+        error:
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError),
+        playlistId,
+      });
+      return [];
     }
   }
 

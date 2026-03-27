@@ -81,6 +81,7 @@ export const CrossfadeControl = ({
     const nextSettings: PlaybackSettings = {
       crossfadeEnabled: !playbackSettings.crossfadeEnabled,
       crossfadeDurationSeconds: displayDuration,
+      volumeNormalizationEnabled: playbackSettings.volumeNormalizationEnabled,
     };
 
     try {
@@ -112,6 +113,7 @@ export const CrossfadeControl = ({
     const nextSettings: PlaybackSettings = {
       crossfadeEnabled: playbackSettings.crossfadeEnabled,
       crossfadeDurationSeconds: nextDuration,
+      volumeNormalizationEnabled: playbackSettings.volumeNormalizationEnabled,
     };
 
     requestVersionRef.current += 1;

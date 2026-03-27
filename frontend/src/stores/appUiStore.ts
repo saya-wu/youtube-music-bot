@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-type DesktopMode = "player" | "library";
+type DesktopMode = "player" | "library" | "discover";
 type MobileNowPlayingView = "player" | "lyrics" | "queue";
 
 interface AppUiStore {

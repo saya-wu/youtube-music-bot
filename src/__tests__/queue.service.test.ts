@@ -95,6 +95,7 @@ describe("QueueService - seekTo functionality", () => {
       expect(queueService.getState().playbackSettings).toEqual({
         crossfadeEnabled: true,
         crossfadeDurationSeconds: 4,
+        volumeNormalizationEnabled: true,
       });
     });
 
@@ -107,6 +108,7 @@ describe("QueueService - seekTo functionality", () => {
       expect(nextSettings).toEqual({
         crossfadeEnabled: false,
         crossfadeDurationSeconds: 8,
+        volumeNormalizationEnabled: true,
       });
       expect(queueService.getState().playbackSettings).toEqual(nextSettings);
     });
@@ -213,6 +215,28 @@ describe("QueueService - seekTo functionality", () => {
       expect(() => queueService.reorderQueue(0, 3)).toThrow(
         "Invalid queue index",
       );
+    });
+
+    test("should clear queued tracks without affecting the current track", () => {
+      const internalQueueService = queueService as unknown as {
+        queue: Track[];
+        currentTrack: Track | null;
+        preloadTrackId: string | null;
+      };
+
+      internalQueueService.queue = [
+        track("track-1", "Track 1"),
+        track("track-2", "Track 2"),
+      ];
+      internalQueueService.currentTrack = track("current-track", "Current Track");
+      internalQueueService.preloadTrackId = "track-1";
+
+      const clearedCount = queueService.clearQueue();
+
+      expect(clearedCount).toBe(2);
+      expect(queueService.getQueue()).toEqual([]);
+      expect(queueService.getState().currentTrack?.videoId).toBe("current-track");
+      expect(internalQueueService.preloadTrackId).toBeNull();
     });
 
     test("should preserve requestedBy on addToQueue", async () => {

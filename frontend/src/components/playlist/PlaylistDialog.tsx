@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Heart, Library, Plus, X } from "lucide-react";
-import { api } from "@/services/api";
-import type { AlbumDetails, Track } from "@/types";
-import { getCurrentRequester, useLibraryStore } from "@/stores/libraryStore";
-import { useAlbumDialogStore } from "@/stores/albumDialogStore";
+import { Heart, Library, ListMusic, Plus, X } from "lucide-react";
+import { OpenAlbumButton } from "@/components/album/OpenAlbumButton";
+import { OpenArtistButton } from "@/components/artist/OpenArtistButton";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -11,17 +9,20 @@ import { Empty } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
-import { OpenArtistButton } from "@/components/artist/OpenArtistButton";
 import { cn } from "@/lib/utils";
+import { api } from "@/services/api";
+import { getCurrentRequester, useLibraryStore } from "@/stores/libraryStore";
+import { usePlaylistDialogStore } from "@/stores/playlistDialogStore";
+import type { PlaylistDetails, Track } from "@/types";
 import { formatTime } from "@/utils/format";
 
 const EMPTY_FAVORITES: Array<{ videoId: string }> = [];
 
-export const AlbumDialog = () => {
-  const isOpen = useAlbumDialogStore((state) => state.isOpen);
-  const selectedAlbum = useAlbumDialogStore((state) => state.selectedAlbum);
-  const closeAlbum = useAlbumDialogStore((state) => state.closeAlbum);
-  const selectedAlbumId = selectedAlbum?.id ?? null;
+export const PlaylistDialog = () => {
+  const isOpen = usePlaylistDialogStore((state) => state.isOpen);
+  const selectedPlaylist = usePlaylistDialogStore((state) => state.selectedPlaylist);
+  const closePlaylist = usePlaylistDialogStore((state) => state.closePlaylist);
+  const selectedPlaylistId = selectedPlaylist?.id ?? null;
   const libraryReady = useLibraryStore((state) => state.ready);
   const favorites = useLibraryStore(
     (state) => state.snapshot?.favorites ?? EMPTY_FAVORITES,
@@ -32,11 +33,11 @@ export const AlbumDialog = () => {
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
   const openPlaylistPicker = useLibraryStore((state) => state.openPlaylistPicker);
   const { showToast } = useToast();
-  const [albumDetails, setAlbumDetails] = useState<AlbumDetails | null>(null);
+  const [playlistDetails, setPlaylistDetails] = useState<PlaylistDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addingTrackId, setAddingTrackId] = useState<string | null>(null);
-  const [isQueueingAlbum, setIsQueueingAlbum] = useState(false);
+  const [isQueueingPlaylist, setIsQueueingPlaylist] = useState(false);
   const [togglingFavoriteTrackId, setTogglingFavoriteTrackId] = useState<string | null>(
     null,
   );
@@ -45,10 +46,19 @@ export const AlbumDialog = () => {
     () => new Set(favorites.map((favorite) => favorite.videoId)),
     [favorites],
   );
+  const displayTitle =
+    selectedPlaylist?.name || playlistDetails?.title || "播放清單";
+  const supportSubtitle =
+    playlistDetails?.subtitle ||
+    (playlistDetails?.title &&
+    selectedPlaylist?.name &&
+    playlistDetails.title !== selectedPlaylist.name
+      ? playlistDetails.title
+      : undefined);
 
   useEffect(() => {
-    if (!isOpen || !selectedAlbumId) {
-      setAlbumDetails(null);
+    if (!isOpen || !selectedPlaylistId) {
+      setPlaylistDetails(null);
       setIsLoading(false);
       setError(null);
       return;
@@ -56,28 +66,28 @@ export const AlbumDialog = () => {
 
     let cancelled = false;
 
-    async function loadAlbum(albumId: string) {
+    async function loadPlaylist(playlistId: string) {
       setIsLoading(true);
       setError(null);
 
       try {
-        const response = await api.getAlbum(albumId);
+        const response = await api.getPlaylist(playlistId);
 
         if (cancelled) {
           return;
         }
 
         if (response.success && response.data) {
-          setAlbumDetails(response.data);
+          setPlaylistDetails(response.data);
           return;
         }
 
-        setAlbumDetails(null);
-        setError(response.error || "專輯資訊載入失敗");
+        setPlaylistDetails(null);
+        setError(response.error || "播放清單資訊載入失敗");
       } catch {
         if (!cancelled) {
-          setAlbumDetails(null);
-          setError("專輯資訊載入失敗");
+          setPlaylistDetails(null);
+          setError("播放清單資訊載入失敗");
         }
       } finally {
         if (!cancelled) {
@@ -86,18 +96,18 @@ export const AlbumDialog = () => {
       }
     }
 
-    void loadAlbum(selectedAlbumId);
+    void loadPlaylist(selectedPlaylistId);
 
     return () => {
       cancelled = true;
     };
-  }, [isOpen, reloadToken, selectedAlbumId]);
+  }, [isOpen, reloadToken, selectedPlaylistId]);
 
   const handleAddToQueue = async (track: Track) => {
     setAddingTrackId(track.videoId);
 
     try {
-      const response = await api.addToQueue(track, currentRequester);
+      const response = await api.queueDiscoverTrack(track, currentRequester);
       if (response.success) {
         showToast({
           message: `已加入播放佇列：${track.title}`,
@@ -149,65 +159,70 @@ export const AlbumDialog = () => {
     openPlaylistPicker(track);
   };
 
-  const handleQueueAlbum = async () => {
-    if (!albumDetails || albumDetails.tracks.length === 0) {
+  const handleQueuePlaylist = async () => {
+    if (!playlistDetails || playlistDetails.tracks.length === 0) {
       return;
     }
 
-    setIsQueueingAlbum(true);
+    setIsQueueingPlaylist(true);
 
     try {
-      const response = await api.queueAlbum(
-        albumDetails.id,
-        albumDetails.tracks,
+      const response = await api.queueDiscoverCollection(
+        "playlist",
+        playlistDetails.id,
         currentRequester,
       );
 
-      if (response.success) {
+      if (response.success && response.data) {
         showToast({
-          message: `已加入整張專輯：${albumDetails.title}`,
+          message: `已加入 ${response.data.count} 首歌曲`,
           type: "success",
         });
       } else {
         showToast({
-          message: response.error || "加入整張專輯失敗",
+          message: response.error || "加入播放清單失敗",
           type: "error",
         });
       }
     } catch {
-      showToast({ message: "加入整張專輯失敗", type: "error" });
+      showToast({ message: "加入播放清單失敗", type: "error" });
     } finally {
-      setIsQueueingAlbum(false);
+      setIsQueueingPlaylist(false);
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && closeAlbum()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && closePlaylist()}>
       <DialogContent className="flex h-[min(90vh,920px)] w-[min(96vw,980px)] max-w-[980px] flex-col p-0">
         <div className="border-b border-[color:var(--surface-border)] px-6 pb-5 pt-6 lg:px-8 lg:pb-6 lg:pt-7">
           <div className="mb-5 flex items-start justify-between gap-6">
             <div className="min-w-0">
               <DialogTitle className="text-[2rem] font-semibold tracking-tight">
-                {albumDetails?.title || selectedAlbum?.name || "專輯"}
+                {displayTitle}
               </DialogTitle>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--text-secondary)]">
-                {albumDetails?.artistId ? (
+                {playlistDetails?.artistId ? (
                   <OpenArtistButton
-                    artistId={albumDetails.artistId}
-                    artistName={albumDetails.artist}
-                    onNavigate={closeAlbum}
+                    artistId={playlistDetails.artistId}
+                    artistName={playlistDetails.artist}
+                    onNavigate={closePlaylist}
                     className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                     labelClassName="text-sm"
                   />
                 ) : (
-                  <span>{albumDetails?.artist || "正在載入專輯資訊"}</span>
+                  <span>{playlistDetails?.artist || "正在載入播放清單資訊"}</span>
                 )}
-                {albumDetails?.trackSummary ? <span>· {albumDetails.trackSummary}</span> : null}
+                {playlistDetails?.trackSummary ? (
+                  <span>· {playlistDetails.trackSummary}</span>
+                ) : null}
+                {playlistDetails?.truncated ? (
+                  <span>· 目前僅顯示前 200 首</span>
+                ) : null}
               </div>
             </div>
             <DialogClose
               className="static shrink-0 rounded-full p-4"
-              aria-label="關閉專輯"
+              aria-label="關閉播放清單"
             >
               <X className="h-6 w-6" />
             </DialogClose>
@@ -216,32 +231,36 @@ export const AlbumDialog = () => {
           <div className="flex flex-col gap-4 rounded-[28px] border border-[color:var(--surface-border)] bg-[var(--surface-subtle)] p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <Avatar
-                src={albumDetails?.thumbnail}
-                alt={albumDetails?.title || selectedAlbum?.name || "專輯"}
+                src={playlistDetails?.thumbnail}
+                alt={displayTitle}
                 size="lg"
                 className="h-24 w-24 rounded-[24px] border border-[color:var(--surface-border)]"
               />
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                  Album
+                  Playlist
                 </p>
                 <p className="mt-2 text-xl font-semibold text-[var(--text-primary)]">
-                  {albumDetails?.title || selectedAlbum?.name || "專輯"}
+                  {displayTitle}
                 </p>
-                {albumDetails?.subtitle ? (
+                {supportSubtitle ? (
                   <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    {albumDetails.subtitle}
+                    {supportSubtitle}
                   </p>
                 ) : null}
               </div>
             </div>
             <Button
               className="h-11 rounded-2xl px-4 sm:shrink-0"
-              onClick={() => void handleQueueAlbum()}
-              disabled={!albumDetails || albumDetails.tracks.length === 0 || isQueueingAlbum}
+              onClick={() => void handleQueuePlaylist()}
+              disabled={
+                !playlistDetails ||
+                playlistDetails.tracks.length === 0 ||
+                isQueueingPlaylist
+              }
             >
-              <Plus className="h-4 w-4" />
-              {isQueueingAlbum ? "加入中..." : "整張專輯加入佇列"}
+              <ListMusic className="h-4 w-4" />
+              {isQueueingPlaylist ? "加入中..." : "整張播放清單加入佇列"}
             </Button>
           </div>
         </div>
@@ -255,7 +274,7 @@ export const AlbumDialog = () => {
             ) : error ? (
               <div className="surface-subtle rounded-[28px] border border-[color:var(--surface-border)] p-6 text-center">
                 <p className="text-base font-semibold text-[var(--text-primary)]">
-                  專輯目前無法載入
+                  播放清單目前無法載入
                 </p>
                 <p className="mt-2 text-sm text-[var(--text-secondary)]">
                   {error}
@@ -267,9 +286,9 @@ export const AlbumDialog = () => {
                   重新載入
                 </Button>
               </div>
-            ) : albumDetails && albumDetails.tracks.length > 0 ? (
+            ) : playlistDetails && playlistDetails.tracks.length > 0 ? (
               <div className="space-y-3">
-                {albumDetails.tracks.map((track, index) => {
+                {playlistDetails.tracks.map((track, index) => {
                   const isFavorite = favoriteTrackIds.has(track.videoId);
                   const isTogglingFavorite = togglingFavoriteTrackId === track.videoId;
 
@@ -303,6 +322,13 @@ export const AlbumDialog = () => {
                         >
                           {track.artist} · {formatTime(track.duration)}
                         </p>
+                        {track.album ? (
+                          <OpenAlbumButton
+                            album={track.album}
+                            trackTitle={track.title}
+                            className="mt-1"
+                          />
+                        ) : null}
                       </div>
 
                       <div className="flex justify-end">
@@ -353,8 +379,8 @@ export const AlbumDialog = () => {
               </div>
             ) : (
               <Empty
-                title="這張專輯暫時沒有可顯示的曲目"
-                description="稍後再試一次，或換一張專輯看看。"
+                title="這個播放清單暫時沒有可顯示的曲目"
+                description="稍後再試一次，或換一個播放清單看看。"
               />
             )}
           </div>

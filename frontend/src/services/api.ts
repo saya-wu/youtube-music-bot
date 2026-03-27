@@ -1,8 +1,15 @@
 import type {
   AlbumDetails,
+  ArtistDetails,
   ApiResponse,
+  DiscoverCollectionKind,
+  DiscoverFeedResponse,
+  DiscoverMarketCode,
+  DiscoverMarketsResponse,
   PlaybackSettings,
   PlaybackState,
+  PlaylistDetails,
+  ReleaseNotesResponse,
   SearchResult,
   Track,
 } from "@/types";
@@ -103,6 +110,55 @@ class ApiService {
     });
   }
 
+  async getDiscoverMarkets(): Promise<ApiResponse<DiscoverMarketsResponse>> {
+    return this.request<DiscoverMarketsResponse>("/discover/markets");
+  }
+
+  async getDiscoverFeed(
+    market: DiscoverMarketCode,
+    moodKey?: string | null,
+  ): Promise<ApiResponse<DiscoverFeedResponse>> {
+    const params = new URLSearchParams({
+      market,
+    });
+
+    if (moodKey?.trim()) {
+      params.set("mood", moodKey.trim());
+    }
+
+    return this.request<DiscoverFeedResponse>(
+      `/discover/feed?${params.toString()}`,
+    );
+  }
+
+  async getReleaseNotes(): Promise<ApiResponse<ReleaseNotesResponse>> {
+    return this.request<ReleaseNotesResponse>("/system/release-notes");
+  }
+
+  async queueDiscoverTrack(
+    track: Track,
+    requestedBy?: RequestedByPayload,
+  ): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>("/discover/track/queue", {
+      method: "POST",
+      body: JSON.stringify({ track, requestedBy }),
+    });
+  }
+
+  async queueDiscoverCollection(
+    kind: DiscoverCollectionKind,
+    id: string,
+    requestedBy?: RequestedByPayload,
+  ): Promise<ApiResponse<{ message: string; count: number }>> {
+    return this.request<{ message: string; count: number }>(
+      "/discover/collection/queue",
+      {
+        method: "POST",
+        body: JSON.stringify({ kind, id, requestedBy }),
+      },
+    );
+  }
+
   // 創建 Mix 混合播放清單
   async createMix(
     track: Track,
@@ -169,6 +225,13 @@ class ApiService {
   // 從佇列移除
   async removeFromQueue(index: number): Promise<ApiResponse<void>> {
     return this.request<void>(`/queue/${index}`, { method: "DELETE" });
+  }
+
+  // 清空佇列
+  async clearQueue(): Promise<ApiResponse<{ message: string; count: number }>> {
+    return this.request<{ message: string; count: number }>("/queue", {
+      method: "DELETE",
+    });
   }
 
   // 重新排序佇列
@@ -303,6 +366,20 @@ class ApiService {
 
   async getAlbum(albumId: string): Promise<ApiResponse<AlbumDetails>> {
     return this.request<AlbumDetails>(`/albums/${encodeURIComponent(albumId)}`);
+  }
+
+  async getPlaylist(
+    playlistId: string,
+  ): Promise<ApiResponse<PlaylistDetails>> {
+    return this.request<PlaylistDetails>(
+      `/playlists/${encodeURIComponent(playlistId)}`,
+    );
+  }
+
+  async getArtist(artistId: string): Promise<ApiResponse<ArtistDetails>> {
+    return this.request<ArtistDetails>(
+      `/artists/${encodeURIComponent(artistId)}`,
+    );
   }
 }
 

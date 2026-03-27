@@ -28,6 +28,8 @@ type PlayerSession = {
   id: number;
   purpose: SessionPurpose;
   source: SessionSource;
+  volumeMultiplier: number;
+  targetVolume: number;
   process: ChildProcess;
   ipcSocket: Socket | null;
   ipcPath: string;
@@ -40,6 +42,8 @@ type PlayerSession = {
 
 const CROSSFADE_TICK_MS = 100;
 const RETIRING_STOP_GRACE_MS = 180;
+const MAX_USER_VOLUME = 100;
+const MAX_SESSION_VOLUME = 200;
 
 class PlayerService {
   private static instance: PlayerService;
@@ -134,6 +138,40 @@ class PlayerService {
     return ["--ao=pulse,alsa"];
   }
 
+  private clampUserVolume(volume: number): number {
+    return Math.max(0, Math.min(MAX_USER_VOLUME, volume));
+  }
+
+  private clampSessionVolume(volume: number): number {
+    return Math.max(0, Math.min(MAX_SESSION_VOLUME, volume));
+  }
+
+  private normalizeVolumeMultiplier(multiplier: number | undefined): number {
+    if (typeof multiplier !== "number" || !Number.isFinite(multiplier)) {
+      return 1;
+    }
+
+    return Math.max(0.1, Math.min(4, multiplier));
+  }
+
+  private computeTargetVolume(
+    userVolume: number,
+    volumeMultiplier: number,
+  ): number {
+    return this.clampSessionVolume(userVolume * volumeMultiplier);
+  }
+
+  private refreshSessionTargetVolume(
+    session: PlayerSession,
+    userVolume: number = this.currentVolume,
+  ): number {
+    session.targetVolume = this.computeTargetVolume(
+      userVolume,
+      session.volumeMultiplier,
+    );
+    return session.targetVolume;
+  }
+
   private buildMpvArgs(
     session: PlayerSession,
     options: { volume: number; startPaused: boolean },
@@ -141,6 +179,7 @@ class PlayerService {
     const mpvArgs = [
       "--no-video",
       `--volume=${options.volume}`,
+      `--volume-max=${MAX_SESSION_VOLUME}`,
       "--no-audio-display",
       "--msg-level=all=info",
       `--input-ipc-server=${session.ipcPath}`,
@@ -288,7 +327,7 @@ class PlayerService {
   }
 
   private setSessionVolume(session: PlayerSession, volume: number): void {
-    const nextVolume = Math.max(0, Math.min(100, volume));
+    const nextVolume = this.clampSessionVolume(volume);
     this.sendIpcCommand(session, ["set_property", "volume", nextVolume]);
   }
 
@@ -537,6 +576,7 @@ class PlayerService {
     trackId?: string | null;
     startPaused?: boolean;
     volume?: number;
+    volumeMultiplier?: number;
     confirmMode: SessionConfirmMode;
   }): { session: PlayerSession; ready: Promise<boolean> } {
     const sessionId = ++this.playSessionId;
@@ -544,6 +584,8 @@ class PlayerService {
       id: sessionId,
       purpose: options.purpose,
       source: options.source,
+      volumeMultiplier: this.normalizeVolumeMultiplier(options.volumeMultiplier),
+      targetVolume: 0,
       process: null as unknown as ChildProcess,
       ipcSocket: null,
       ipcPath: this.getIpcPath(sessionId),
@@ -555,9 +597,16 @@ class PlayerService {
     };
 
     const startPaused = options.startPaused ?? false;
-    const volume = options.volume ?? this.currentVolume;
+    const userVolume =
+      options.volume !== undefined
+        ? this.clampUserVolume(options.volume)
+        : this.currentVolume;
+    session.targetVolume = this.computeTargetVolume(
+      userVolume,
+      session.volumeMultiplier,
+    );
     const mpvArgs = this.buildMpvArgs(session, {
-      volume,
+      volume: startPaused ? 0 : session.targetVolume,
       startPaused,
     });
     const mpvCommand = getMpvExecutable();
@@ -611,6 +660,16 @@ class PlayerService {
             );
           })
           .catch((error) => {
+            if (!this.isTrackedSession(session)) {
+              log.debug("Skipping IPC connection failure for untracked session", {
+                error: error.message,
+                sessionId: session.id,
+                purpose: session.purpose,
+                ipcPath: session.ipcPath,
+              });
+              return;
+            }
+
             log.error(
               "Failed to connect IPC - playback will continue without state sync",
               {
@@ -826,18 +885,22 @@ class PlayerService {
     }
 
     if (this.activeSession) {
-      this.setSessionVolume(this.activeSession, this.currentVolume);
+      this.setSessionVolume(this.activeSession, this.activeSession.targetVolume);
     }
   }
 
   private async playSource(
     source: SessionSource,
-    options: { volume?: number } = {},
+    options: {
+      trackId?: string | null;
+      volume?: number;
+      volumeMultiplier?: number;
+    } = {},
   ): Promise<void> {
     this.stopAllSessions();
 
     if (options.volume !== undefined) {
-      this.currentVolume = options.volume;
+      this.currentVolume = this.clampUserVolume(options.volume);
     }
 
     const { session, ready } = this.spawnSession({
@@ -846,47 +909,86 @@ class PlayerService {
       confirmMode: "playback",
       startPaused: false,
       volume: this.currentVolume,
-      trackId: source.type === "youtube" ? source.value : null,
+      volumeMultiplier: options.volumeMultiplier,
+      trackId:
+        options.trackId ??
+        (source.type === "youtube" ? source.value : null),
     });
 
     this.activeSession = session;
     this.isPlaying = true;
 
-    const didStart = await ready;
-    if (!didStart) {
+    try {
+      const didStart = await ready;
+      if (!didStart) {
+        if (this.activeSession === session) {
+          this.stopSpecificSession(session);
+        }
+        this.isPlaying = false;
+        throw new Error("Playback session was cancelled before start");
+      }
+    } catch (error) {
+      if (this.activeSession === session) {
+        this.stopSpecificSession(session);
+      }
       this.isPlaying = false;
-      throw new Error("Playback session was cancelled before start");
+      throw error;
     }
   }
 
-  async play(videoId: string, volume?: number): Promise<void> {
+  async play(
+    videoId: string,
+    options: { volume?: number; volumeMultiplier?: number } = {},
+  ): Promise<void> {
     log.info("Playing video", {
       videoId,
-      volume: volume ?? this.currentVolume,
+      volume: options.volume ?? this.currentVolume,
+      volumeMultiplier: options.volumeMultiplier ?? 1,
     });
 
     await this.playSource(
       { type: "youtube", value: videoId },
-      { volume },
+      {
+        trackId: videoId,
+        volume: options.volume,
+        volumeMultiplier: options.volumeMultiplier,
+      },
     );
   }
 
-  async playUrl(streamUrl: string, volume?: number): Promise<void> {
+  async playUrl(
+    streamUrl: string,
+    options: {
+      trackId?: string | null;
+      volume?: number;
+      volumeMultiplier?: number;
+    } = {},
+  ): Promise<void> {
     log.info("Playing stream URL", {
-      volume: volume ?? this.currentVolume,
+      volume: options.volume ?? this.currentVolume,
+      volumeMultiplier: options.volumeMultiplier ?? 1,
+      trackId: options.trackId ?? null,
     });
 
     await this.playSource(
       { type: "stream", value: streamUrl },
-      { volume },
+      options,
     );
   }
 
-  async preloadUrl(trackId: string, streamUrl: string): Promise<boolean> {
+  async preloadUrl(
+    trackId: string,
+    streamUrl: string,
+    options: { volumeMultiplier?: number } = {},
+  ): Promise<boolean> {
     if (
       this.standbySession?.trackId === trackId &&
       this.standbySession.ready
     ) {
+      this.standbySession.volumeMultiplier = this.normalizeVolumeMultiplier(
+        options.volumeMultiplier,
+      );
+      this.refreshSessionTargetVolume(this.standbySession);
       return true;
     }
 
@@ -900,6 +1002,7 @@ class PlayerService {
       confirmMode: "preload",
       startPaused: true,
       volume: 0,
+      volumeMultiplier: options.volumeMultiplier,
       trackId,
     });
 
@@ -957,7 +1060,7 @@ class PlayerService {
     standby.purpose = "active";
     this.clearCrossfadeTimer();
 
-    this.setSessionVolume(standby, this.currentVolume);
+    this.setSessionVolume(standby, standby.targetVolume);
     this.setSessionPaused(standby, false);
 
     if (outgoing) {
@@ -1000,17 +1103,16 @@ class PlayerService {
     const applyVolumes = () => {
       const elapsed = Date.now() - startedAt;
       const progress = Math.max(0, Math.min(1, elapsed / totalDuration));
-      const targetVolume = this.currentVolume;
       const fadeOutFactor = Math.cos((progress * Math.PI) / 2);
       const fadeInFactor = Math.sin((progress * Math.PI) / 2);
 
-      this.setSessionVolume(outgoing, targetVolume * fadeOutFactor);
-      this.setSessionVolume(incoming, targetVolume * fadeInFactor);
+      this.setSessionVolume(outgoing, outgoing.targetVolume * fadeOutFactor);
+      this.setSessionVolume(incoming, incoming.targetVolume * fadeInFactor);
 
       if (progress >= 1) {
         this.clearCrossfadeTimer();
         this.setSessionVolume(outgoing, 0);
-        this.setSessionVolume(incoming, targetVolume);
+        this.setSessionVolume(incoming, incoming.targetVolume);
       }
     };
 
@@ -1060,11 +1162,54 @@ class PlayerService {
   }
 
   setVolume(volume: number): void {
-    this.currentVolume = Math.max(0, Math.min(100, volume));
+    this.currentVolume = this.clampUserVolume(volume);
     log.debug("Setting volume", { volume: this.currentVolume });
 
     if (this.activeSession) {
-      this.setSessionVolume(this.activeSession, this.currentVolume);
+      this.refreshSessionTargetVolume(this.activeSession);
+    }
+
+    if (this.standbySession) {
+      this.refreshSessionTargetVolume(this.standbySession);
+    }
+
+    for (const session of this.retiringSessions) {
+      this.refreshSessionTargetVolume(session);
+    }
+
+    if (this.activeSession && !this.crossfadeTimer) {
+      this.setSessionVolume(this.activeSession, this.activeSession.targetVolume);
+    }
+  }
+
+  setTrackVolumeMultiplier(trackId: string, volumeMultiplier: number): void {
+    const normalizedTrackId = trackId.trim();
+    if (!normalizedTrackId) {
+      return;
+    }
+
+    const nextMultiplier = this.normalizeVolumeMultiplier(volumeMultiplier);
+    let updatedActive = false;
+
+    const updateSession = (session: PlayerSession | null): boolean => {
+      if (!session || session.trackId !== normalizedTrackId) {
+        return false;
+      }
+
+      session.volumeMultiplier = nextMultiplier;
+      this.refreshSessionTargetVolume(session);
+      return true;
+    };
+
+    updatedActive = updateSession(this.activeSession);
+    updateSession(this.standbySession);
+
+    for (const session of this.retiringSessions) {
+      updateSession(session);
+    }
+
+    if (updatedActive && this.activeSession && !this.crossfadeTimer) {
+      this.setSessionVolume(this.activeSession, this.activeSession.targetVolume);
     }
   }
 

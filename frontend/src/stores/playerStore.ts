@@ -40,8 +40,8 @@ interface PlayerStore {
   setMobileSearchOpen: (open: boolean) => void;
 
   // 手機版 TabBar 狀態
-  mobileActiveTab: "search" | "library";
-  setMobileActiveTab: (tab: "search" | "library") => void;
+  mobileActiveTab: "search" | "discover" | "library";
+  setMobileActiveTab: (tab: "search" | "discover" | "library") => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set) => ({
@@ -65,6 +65,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
     playbackSettings: {
       crossfadeEnabled: true,
       crossfadeDurationSeconds: 4,
+      volumeNormalizationEnabled: true,
     },
   },
   setPlaybackState: (nextState) =>
@@ -251,6 +252,8 @@ function isSamePlaybackState(
       right.playbackSettings.crossfadeEnabled &&
     left.playbackSettings.crossfadeDurationSeconds ===
       right.playbackSettings.crossfadeDurationSeconds &&
+    left.playbackSettings.volumeNormalizationEnabled ===
+      right.playbackSettings.volumeNormalizationEnabled &&
     areTracksEqual(left.currentTrack, right.currentTrack) &&
     areTracksEqual(left.lastPlayedTrack, right.lastPlayedTrack) &&
     areQueuesEqual(left.queue, right.queue)

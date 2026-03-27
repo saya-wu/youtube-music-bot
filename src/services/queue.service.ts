@@ -6,7 +6,10 @@ import type {
   PlaybackSettings,
 } from "../types/index.ts";
 import { getPlayerService } from "./player.service.ts";
-import { getMusicService } from "./music.service.ts";
+import {
+  getMusicService,
+  type TrackLoudnessInfo,
+} from "./music.service.ts";
 import { pushRecentTrackId, selectRadioCandidates } from "./radio.helpers.ts";
 import { log } from "../utils/logger.ts";
 
@@ -28,12 +31,16 @@ const PROGRESS_BROADCAST_INTERVAL_MS = 250;
 const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   crossfadeEnabled: true,
   crossfadeDurationSeconds: 4,
+  volumeNormalizationEnabled: true,
 };
 const MIN_CROSSFADE_DURATION_SECONDS = 1;
 const MAX_CROSSFADE_DURATION_SECONDS = 8;
 const MIN_CROSSFADE_START_POSITION_SECONDS = 5;
 const CROSSFADE_START_TOLERANCE_SECONDS = 0.35;
 const MAX_CROSSFADE_TRIGGER_LEAD_SECONDS = 1;
+const VOLUME_NORMALIZATION_REFERENCE_DB = -14;
+const MAX_VOLUME_NORMALIZATION_BOOST_DB = 6;
+const MAX_VOLUME_NORMALIZATION_ATTENUATION_DB = 12;
 
 class QueueService {
   private static instance: QueueService | undefined;
@@ -407,6 +414,27 @@ class QueueService {
   }
 
   /**
+   * 清空待播佇列，保留目前正在播放的歌曲
+   */
+  clearQueue(): number {
+    const clearedCount = this.queue.length;
+
+    this.queue = [];
+    this.clearPendingPreload();
+    this.resetCrossfadeState();
+
+    if (clearedCount === 0) {
+      return 0;
+    }
+
+    log.info("Cleared queue", { clearedCount });
+    this.broadcastQueueChange();
+    this.broadcastState();
+
+    return clearedCount;
+  }
+
+  /**
    * 重新排序播放清單
    */
   reorderQueue(fromIndex: number, toIndex: number): void {
@@ -525,16 +553,22 @@ class QueueService {
     this.broadcastTrackLoading(nextTrack);
 
     try {
+      const volumeMultiplierPromise =
+        this.resolveTrackVolumeMultiplier(nextTrack);
       log.info("Fetching direct stream URL for playback", {
         videoId: nextTrack.videoId,
       });
       const streamResult = await getMusicService().getStreamUrl(nextTrack.videoId);
+      const volumeMultiplier = await volumeMultiplierPromise;
       log.info("Direct stream URL obtained", {
         source: streamResult.source,
         bitrate: streamResult.bitrate,
         urlLength: streamResult.url.length,
       });
-      await player.playUrl(streamResult.url);
+      await player.playUrl(streamResult.url, {
+        trackId: nextTrack.videoId,
+        volumeMultiplier,
+      });
       log.info("Playback started successfully via direct stream URL", {
         source: streamResult.source,
       });
@@ -550,7 +584,10 @@ class QueueService {
       });
 
       try {
-        await player.play(nextTrack.videoId);
+        const volumeMultiplier = await this.resolveTrackVolumeMultiplier(nextTrack);
+        await player.play(nextTrack.videoId, {
+          volumeMultiplier,
+        });
         log.info("Fallback playback started successfully via YouTube URL");
         this.broadcastTrackReady(nextTrack);
         void this.syncNextTrackPreload({ force: true });
@@ -655,8 +692,17 @@ class QueueService {
       return { ...this.playbackSettings };
     }
 
+    const volumeNormalizationChanged =
+      this.playbackSettings.volumeNormalizationEnabled !==
+      nextSettings.volumeNormalizationEnabled;
     this.playbackSettings = nextSettings;
     this.broadcastState();
+
+    if (volumeNormalizationChanged) {
+      void this.syncTrackVolumeNormalization(this.currentTrack);
+      void this.syncTrackVolumeNormalization(this.queue[0] ?? null);
+    }
+
     void this.syncNextTrackPreload({ force: true });
     return { ...this.playbackSettings };
   }
@@ -931,9 +977,13 @@ class QueueService {
       return false;
     }
 
-    if (player.isTrackPreloaded(nextTrack.videoId)) {
+    if (!options.force && player.isTrackPreloaded(nextTrack.videoId)) {
       this.preloadTrackId = nextTrack.videoId;
       return true;
+    }
+
+    if (options.force && player.isTrackPreloaded(nextTrack.videoId)) {
+      this.clearPendingPreload(nextTrack.videoId);
     }
 
     if (
@@ -953,12 +1003,15 @@ class QueueService {
 
     const request = (async () => {
       try {
+        const volumeMultiplierPromise =
+          this.resolveTrackVolumeMultiplier(nextTrack);
         log.info("Preloading next track", {
           videoId: nextTrack.videoId,
           title: nextTrack.title,
         });
 
         const streamResult = await getMusicService().getStreamUrl(nextTrack.videoId);
+        const volumeMultiplier = await volumeMultiplierPromise;
         if (
           requestId !== this.preloadRequestId ||
           this.queue[0]?.videoId !== nextTrack.videoId
@@ -966,7 +1019,9 @@ class QueueService {
           return false;
         }
 
-        const ready = await player.preloadUrl(nextTrack.videoId, streamResult.url);
+        const ready = await player.preloadUrl(nextTrack.videoId, streamResult.url, {
+          volumeMultiplier,
+        });
         if (
           !ready ||
           requestId !== this.preloadRequestId ||
@@ -1107,6 +1162,35 @@ class QueueService {
     this.fetchAndBroadcastLyrics();
     this.maybeHydrateRadioQueue();
     void this.syncNextTrackPreload({ force: true });
+  }
+
+  private async syncTrackVolumeNormalization(track: Track | null): Promise<void> {
+    if (!track?.videoId) {
+      return;
+    }
+
+    const volumeMultiplier = await this.resolveTrackVolumeMultiplier(track);
+    getPlayerService().setTrackVolumeMultiplier(track.videoId, volumeMultiplier);
+  }
+
+  private async resolveTrackVolumeMultiplier(track: Track | null): Promise<number> {
+    if (!track?.videoId || !this.playbackSettings.volumeNormalizationEnabled) {
+      return 1;
+    }
+
+    const loudnessInfo = await getMusicService().getTrackLoudness(track.videoId);
+    const normalizationGainDb = resolveNormalizationGainDb(loudnessInfo);
+    const volumeMultiplier = Math.pow(10, normalizationGainDb / 20);
+
+    log.debug("Resolved track volume normalization", {
+      videoId: track.videoId,
+      loudnessDb: loudnessInfo?.loudnessDb,
+      perceptualLoudnessDb: loudnessInfo?.perceptualLoudnessDb,
+      normalizationGainDb,
+      volumeMultiplier,
+    });
+
+    return volumeMultiplier;
   }
 
   resetForTests(): void {
@@ -1374,6 +1458,7 @@ function normalizePlaybackSettings(
       MIN_CROSSFADE_DURATION_SECONDS,
       Math.min(MAX_CROSSFADE_DURATION_SECONDS, nextDuration),
     ),
+    volumeNormalizationEnabled: Boolean(settings.volumeNormalizationEnabled),
   };
 }
 
@@ -1383,7 +1468,30 @@ function arePlaybackSettingsEqual(
 ): boolean {
   return (
     left.crossfadeEnabled === right.crossfadeEnabled &&
-    left.crossfadeDurationSeconds === right.crossfadeDurationSeconds
+    left.crossfadeDurationSeconds === right.crossfadeDurationSeconds &&
+    left.volumeNormalizationEnabled === right.volumeNormalizationEnabled
+  );
+}
+
+function resolveNormalizationGainDb(
+  loudnessInfo: TrackLoudnessInfo | null,
+): number {
+  const loudnessDb = loudnessInfo?.loudnessDb;
+  const perceptualLoudnessDb = loudnessInfo?.perceptualLoudnessDb;
+  let gainDb = 0;
+
+  if (typeof loudnessDb === "number" && Number.isFinite(loudnessDb)) {
+    gainDb = -loudnessDb;
+  } else if (
+    typeof perceptualLoudnessDb === "number" &&
+    Number.isFinite(perceptualLoudnessDb)
+  ) {
+    gainDb = VOLUME_NORMALIZATION_REFERENCE_DB - perceptualLoudnessDb;
+  }
+
+  return Math.max(
+    -MAX_VOLUME_NORMALIZATION_ATTENUATION_DB,
+    Math.min(MAX_VOLUME_NORMALIZATION_BOOST_DB, gainDb),
   );
 }
 

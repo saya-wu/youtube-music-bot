@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Innertube } from "youtubei.js";
 import {
   __resetMusicServiceForTests,
   getMusicService,
@@ -198,6 +199,79 @@ describe("MusicService mix normalization", () => {
         fallbackTrackArtist: "Ru's Piano Ru味春捲",
       }),
     ).toBe("Ru's Piano Ru味春捲");
+  });
+
+  test("should resolve album artist from strapline header and reuse album artwork for album tracks", async () => {
+    const createStub = (async () => ({
+        session: { player: {} },
+        music: {
+          getAlbum: async () => ({
+            header: {
+              title: { text: "太陽之子" },
+              subtitle: { text: "Album • 2026" },
+              strapline_text_one: { text: "周杰倫" },
+              second_subtitle: { text: "13 songs • 48 minutes" },
+              thumbnail: {
+                contents: [{ url: "https://example.com/album.jpg" }],
+              },
+            },
+            contents: [
+              {
+                id: "track-1",
+                title: "太陽之子",
+                duration: { seconds: 298 },
+                thumbnail: {
+                  contents: [{ url: "https://example.com/track-1.jpg" }],
+                },
+              },
+              {
+                id: "track-2",
+                title: "聖誕星",
+                artists: [{ name: "周杰倫, 楊瑞代" }],
+                duration: { seconds: 182 },
+              },
+            ],
+          }),
+        },
+      })) as unknown as typeof Innertube.create;
+
+    stubMethod(Innertube, "create", createStub);
+
+    const album = await getMusicService().getAlbum("album-strapline");
+
+    expect(album).not.toBeNull();
+    expect(album).toMatchObject({
+      id: "album-strapline",
+      title: "太陽之子",
+      artist: "周杰倫",
+      subtitle: "Album • 2026",
+      trackSummary: "13 songs • 48 minutes",
+      thumbnail: "https://example.com/album.jpg",
+    });
+    expect(album?.tracks).toEqual([
+      {
+        videoId: "track-1",
+        title: "太陽之子",
+        artist: "周杰倫",
+        duration: 298,
+        thumbnail: "https://example.com/album.jpg",
+        album: {
+          id: "album-strapline",
+          name: "太陽之子",
+        },
+      },
+      {
+        videoId: "track-2",
+        title: "聖誕星",
+        artist: "周杰倫, 楊瑞代",
+        duration: 182,
+        thumbnail: "https://example.com/album.jpg",
+        album: {
+          id: "album-strapline",
+          name: "太陽之子",
+        },
+      },
+    ]);
   });
 
   test("should return URL search results without falling back to keyword search", async () => {

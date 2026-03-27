@@ -30,6 +30,7 @@ function createPlaybackState(
     playbackSettings: {
       crossfadeEnabled: true,
       crossfadeDurationSeconds: 4,
+      volumeNormalizationEnabled: true,
     },
     ...overrides,
   };

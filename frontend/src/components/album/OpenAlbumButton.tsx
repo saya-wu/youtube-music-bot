@@ -3,6 +3,7 @@ import { useAlbumDialogStore } from "@/stores/albumDialogStore";
 import { cn } from "@/lib/utils";
 import { Disc3 } from "lucide-react";
 import { MarqueeText } from "@/components/player/MarqueeText";
+import { deferDialogNavigation } from "@/utils/deferDialogNavigation";
 
 interface OpenAlbumButtonProps {
   album: Track["album"];
@@ -10,6 +11,7 @@ interface OpenAlbumButtonProps {
   className?: string;
   useMarquee?: boolean;
   labelClassName?: string;
+  onNavigate?: () => void;
 }
 
 export const OpenAlbumButton = ({
@@ -18,6 +20,7 @@ export const OpenAlbumButton = ({
   className,
   useMarquee = false,
   labelClassName,
+  onNavigate,
 }: OpenAlbumButtonProps) => {
   const openAlbum = useAlbumDialogStore((state) => state.openAlbum);
 
@@ -28,7 +31,17 @@ export const OpenAlbumButton = ({
   return (
     <button
       type="button"
-      onClick={() => openAlbum(album)}
+      onClick={() => {
+        if (onNavigate) {
+          onNavigate();
+          deferDialogNavigation(() => {
+            openAlbum(album);
+          });
+          return;
+        }
+
+        openAlbum(album);
+      }}
       className={cn(
         "inline-flex min-w-0 max-w-full items-center gap-1 text-left text-xs font-medium text-[var(--accent)] transition-opacity hover:opacity-80",
         className,
