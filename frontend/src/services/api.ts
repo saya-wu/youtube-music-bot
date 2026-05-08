@@ -25,6 +25,23 @@ export interface SystemInfoResponse {
   gitSha: string;
   buildVersion: string;
   environment: string;
+  runtimeDependencies?: {
+    mpv: {
+      available: boolean;
+      executable: string;
+      version?: string;
+      error?: string;
+    };
+    ytDlp: {
+      available: boolean;
+      executable: string;
+      version?: string;
+      extractorArgs: string;
+      cookiesConfigured: boolean;
+      cookiesReadable: boolean;
+      error?: string;
+    };
+  };
 }
 
 const API_BASE = "/api";

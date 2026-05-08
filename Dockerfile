@@ -2,6 +2,7 @@
 # Stage 1: 構建前端
 ARG APP_VERSION=0.2.0
 ARG APP_GIT_SHA=dev
+ARG YTDLP_VERSION=2026.03.17
 
 FROM node:20-slim AS frontend-builder
 ARG APP_VERSION
@@ -37,14 +38,26 @@ RUN bun build src/index.ts --outdir dist --target bun
 FROM oven/bun:1-slim
 ARG APP_VERSION
 ARG APP_GIT_SHA
+ARG YTDLP_VERSION
 WORKDIR /app
 
-# 安裝 mpv 和 yt-dlp
+# 安裝 mpv，並使用可控版本的 yt-dlp binary
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mpv \
-    yt-dlp \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64|amd64) ytdlp_asset="yt-dlp_linux" ;; \
+      aarch64|arm64) ytdlp_asset="yt-dlp_linux_aarch64" ;; \
+      armv7l|armhf) ytdlp_asset="yt-dlp_linux_armv7l" ;; \
+      *) echo "Unsupported architecture for yt-dlp binary: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -L "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/${ytdlp_asset}" -o /usr/local/bin/yt-dlp; \
+    chmod +x /usr/local/bin/yt-dlp; \
+    yt-dlp --version
 
 # 複製構建產物
 COPY --from=backend-builder /app/dist ./dist

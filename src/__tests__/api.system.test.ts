@@ -56,6 +56,23 @@ describe("/api/system/info", () => {
         gitSha: string;
         buildVersion: string;
         environment: string;
+        runtimeDependencies: {
+          mpv: {
+            available: boolean;
+            executable: string;
+            version?: string;
+            error?: string;
+          };
+          ytDlp: {
+            available: boolean;
+            executable: string;
+            version?: string;
+            extractorArgs: string;
+            cookiesConfigured: boolean;
+            cookiesReadable: boolean;
+            error?: string;
+          };
+        };
       };
     };
 
@@ -64,6 +81,15 @@ describe("/api/system/info", () => {
     expect(payload.data.gitSha).toBeTruthy();
     expect(payload.data.buildVersion).toContain(payload.data.appVersion);
     expect(payload.data.environment).toBeTruthy();
+    expect(payload.data.runtimeDependencies.mpv.executable).toBeTruthy();
+    expect(payload.data.runtimeDependencies.ytDlp.executable).toBeTruthy();
+    expect(payload.data.runtimeDependencies.ytDlp.extractorArgs).toBeTruthy();
+    expect(typeof payload.data.runtimeDependencies.ytDlp.cookiesConfigured).toBe(
+      "boolean",
+    );
+    expect(typeof payload.data.runtimeDependencies.ytDlp.cookiesReadable).toBe(
+      "boolean",
+    );
   });
 
   test("should expose release notes through the system api", async () => {

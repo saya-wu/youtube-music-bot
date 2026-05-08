@@ -15,6 +15,7 @@ import {
   isAllowedArtworkUrl,
   parseArtworkUrl,
 } from "../utils/artwork-proxy.ts";
+import { getRuntimeDependencyStatus } from "../utils/runtime-dependencies.ts";
 
 const api = new Hono();
 
@@ -866,7 +867,10 @@ api.delete("/queue/:index", (c) => {
 api.get("/system/info", (c) =>
   c.json<ApiResponse>({
     success: true,
-    data: getAppMetadata(),
+    data: {
+      ...getAppMetadata(),
+      runtimeDependencies: getRuntimeDependencyStatus(),
+    },
   }),
 );
 

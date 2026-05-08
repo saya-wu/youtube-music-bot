@@ -6,6 +6,7 @@ import {
   normalizeMixTracks,
   normalizeMusicSearchItem,
   resolveCollectionArtist,
+  YtDlpCommandError,
 } from "../services/music.service.ts";
 import type { SearchResult, StreamUrlResult } from "../types/index.ts";
 
@@ -418,5 +419,93 @@ describe("MusicService mix normalization", () => {
 
     expect(extractionCalls).toBe(1);
     expect(first).toEqual(second);
+  });
+
+  test("should fall back to yt-dlp when youtubei.js stream extraction fails", async () => {
+    const musicService = getMusicService() as unknown as {
+      getStreamUrl: (videoId: string) => Promise<StreamUrlResult>;
+      runYtDlpCommand: (
+        args: string[],
+      ) => Promise<{ stdout: string; stderr: string }>;
+    };
+
+    stubMethod(Innertube, "create", (async () => ({
+      session: { player: {} },
+      getStreamingData: async () => {
+        throw new Error("No valid URL to decipher");
+      },
+      getInfo: async () => ({
+        chooseFormat: () => ({
+          itag: 140,
+          bitrate: 128000,
+          mime_type: "audio/mp4",
+          signature_cipher: "cipher",
+        }),
+      }),
+    })) as unknown as typeof Innertube.create);
+    stubMethod(
+      musicService,
+      "runYtDlpCommand",
+      (async () => ({
+        stdout:
+          "https://example.com/video\nhttps://rr.example.com/audio.webm\n",
+        stderr: "",
+      })) as typeof musicService.runYtDlpCommand,
+    );
+
+    const result = await musicService.getStreamUrl("fallback-track");
+
+    expect(result).toEqual({
+      url: "https://rr.example.com/audio.webm",
+      source: "yt-dlp",
+    });
+  });
+
+  test("should surface yt-dlp command failures with diagnostic details", async () => {
+    const musicService = getMusicService() as unknown as {
+      getStreamUrl: (videoId: string) => Promise<StreamUrlResult>;
+      runYtDlpCommand: (
+        args: string[],
+      ) => Promise<{ stdout: string; stderr: string }>;
+    };
+    const commandError = new YtDlpCommandError(
+      "yt-dlp exited with code 1",
+      {
+        executable: "/usr/local/bin/yt-dlp",
+        args: ["-g"],
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "ERROR: Sign in to confirm you're not a bot",
+        timedOut: false,
+      },
+    );
+
+    stubMethod(Innertube, "create", (async () => ({
+      session: { player: {} },
+      getStreamingData: async () => {
+        throw new Error("No valid URL to decipher");
+      },
+      getInfo: async () => ({
+        chooseFormat: () => null,
+      }),
+    })) as unknown as typeof Innertube.create);
+    stubMethod(
+      musicService,
+      "runYtDlpCommand",
+      (async () => {
+        throw commandError;
+      }) as typeof musicService.runYtDlpCommand,
+    );
+
+    await expect(musicService.getStreamUrl("blocked-track")).rejects.toThrow(
+      "yt-dlp exited with code 1",
+    );
+    expect(commandError.details).toMatchObject({
+      executable: "/usr/local/bin/yt-dlp",
+      exitCode: 1,
+      timedOut: false,
+      stderr: "ERROR: Sign in to confirm you're not a bot",
+    });
   });
 });

@@ -15,8 +15,12 @@ services:
       - LOG_LEVEL=INFO
       - SYNC_STATE_DB_PATH=/data/sync-state.sqlite
       - YTDLP_EXTRACTOR_ARGS=youtube:player_client=android_vr
+      # 如果生產 IP 被 YouTube 要求人類驗證，掛載 cookies 檔後取消註解：
+      # - YTDLP_COOKIES_FILE=/run/secrets/youtube-cookies.txt
     volumes:
       - sync-state:/data
+      # cookies 檔不會放進 image；需要時用唯讀 volume 掛載：
+      # - ./secrets/youtube-cookies.txt:/run/secrets/youtube-cookies.txt:ro
     labels:
       - com.centurylinklabs.watchtower.enable=true
     # 可選：如果需要 PulseAudio（取消註解以下配置）
