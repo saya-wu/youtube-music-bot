@@ -1,18 +1,30 @@
 import { spawnSync } from "node:child_process";
 import { log } from "./logger.ts";
-import { getYtDlpExecutable } from "./ytdlp.ts";
+import { probeYtDlpRuntime } from "./ytdlp.ts";
 
 type RuntimeDependency = {
-  name: "mpv" | "yt-dlp";
+  name: "mpv";
   executable: string;
   required: boolean;
   purpose: string;
 };
 
-type DependencyProbeResult = {
+export type DependencyProbeResult = {
   available: boolean;
+  executable: string;
   version?: string;
   error?: string;
+};
+
+export type YtDlpDependencyProbeResult = DependencyProbeResult & {
+  extractorArgs: string;
+  cookiesConfigured: boolean;
+  cookiesReadable: boolean;
+};
+
+export type RuntimeDependencyStatus = {
+  mpv: DependencyProbeResult;
+  ytDlp: YtDlpDependencyProbeResult;
 };
 
 export function getMpvExecutable(): string {
@@ -33,6 +45,7 @@ function probeExecutable(executable: string): DependencyProbeResult {
   if (result.error) {
     return {
       available: false,
+      executable,
       error: result.error.message,
     };
   }
@@ -40,6 +53,7 @@ function probeExecutable(executable: string): DependencyProbeResult {
   if (result.status !== 0) {
     return {
       available: false,
+      executable,
       error:
         result.stderr.trim() ||
         result.stdout.trim() ||
@@ -52,7 +66,26 @@ function probeExecutable(executable: string): DependencyProbeResult {
 
   return {
     available: true,
+    executable,
     version: versionLine,
+  };
+}
+
+export function getRuntimeDependencyStatus(): RuntimeDependencyStatus {
+  const mpv = probeExecutable(getMpvExecutable());
+  const ytDlp = probeYtDlpRuntime();
+
+  return {
+    mpv,
+    ytDlp: {
+      available: ytDlp.available,
+      executable: ytDlp.executable,
+      version: ytDlp.version,
+      extractorArgs: ytDlp.extractorArgs,
+      cookiesConfigured: ytDlp.cookiesConfigured,
+      cookiesReadable: ytDlp.cookiesReadable,
+      error: ytDlp.error,
+    },
   };
 }
 
@@ -63,12 +96,6 @@ export function logRuntimeDependencyStatus(): void {
       executable: getMpvExecutable(),
       required: true,
       purpose: "audio playback",
-    },
-    {
-      name: "yt-dlp",
-      executable: getYtDlpExecutable(),
-      required: false,
-      purpose: "YouTube fallback extraction",
     },
   ];
 
@@ -98,5 +125,36 @@ export function logRuntimeDependencyStatus(): void {
     }
 
     log.warn("Optional runtime dependency missing", context);
+  }
+
+  const ytDlp = probeYtDlpRuntime();
+  if (ytDlp.available) {
+    log.info("Runtime dependency available", {
+      dependency: "yt-dlp",
+      executable: ytDlp.executable,
+      version: ytDlp.version,
+      purpose: "YouTube fallback extraction",
+      extractorArgs: ytDlp.extractorArgs,
+      cookiesConfigured: ytDlp.cookiesConfigured,
+      cookiesReadable: ytDlp.cookiesReadable,
+    });
+  } else {
+    log.warn("Optional runtime dependency missing", {
+      dependency: "yt-dlp",
+      executable: ytDlp.executable,
+      purpose: "YouTube fallback extraction",
+      error: ytDlp.error,
+      extractorArgs: ytDlp.extractorArgs,
+      cookiesConfigured: ytDlp.cookiesConfigured,
+      cookiesReadable: ytDlp.cookiesReadable,
+    });
+  }
+
+  if (ytDlp.cookiesConfigured && !ytDlp.cookiesReadable) {
+    log.warn("Configured yt-dlp cookies file is not readable", {
+      dependency: "yt-dlp",
+      cookiesPath: ytDlp.cookiesPath,
+      error: ytDlp.error,
+    });
   }
 }

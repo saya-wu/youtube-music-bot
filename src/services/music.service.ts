@@ -21,9 +21,12 @@ import { log } from "../utils/logger.ts";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import {
+  getYtDlpCommandTimeoutMs,
   getYtDlpCliArgs,
   getYtDlpExecutable,
+  getYtDlpFailureHint,
   getYtDlpMetadataArgs,
+  parseYtDlpStreamUrlOutput,
 } from "../utils/ytdlp.ts";
 import {
   parseYouTubeUrl,
@@ -1014,6 +1017,32 @@ function parseLrc(lrc: string): LyricLine[] {
 
 const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1000;
 
+export type YtDlpCommandResult = {
+  stdout: string;
+  stderr: string;
+};
+
+export type YtDlpCommandErrorDetails = {
+  executable: string;
+  args: string[];
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  cause?: unknown;
+};
+
+export class YtDlpCommandError extends Error {
+  readonly details: YtDlpCommandErrorDetails;
+
+  constructor(message: string, details: YtDlpCommandErrorDetails) {
+    super(message);
+    this.name = "YtDlpCommandError";
+    this.details = details;
+  }
+}
+
 class MusicService {
   private searchCache = new Map<string, SearchResult[]>();
   private lyricsCache = new Map<string, LyricLine[]>();
@@ -1730,19 +1759,32 @@ class MusicService {
         });
 
         const formatAny = format as any;
-      if (formatAny?.url && formatAny.url.length > 0) {
-        log.info("Stream URL obtained", {
-          bitrate: formatAny.bitrate,
-          urlLength: formatAny.url.length,
+        if (formatAny?.url && formatAny.url.length > 0) {
+          log.info("Stream URL obtained", {
+            bitrate: formatAny.bitrate,
+            urlLength: formatAny.url.length,
+            source: "youtubei",
+          });
+          return {
+            url: formatAny.url,
+            source: "youtubei",
+            bitrate: formatAny.bitrate,
+          };
+        }
+
+        log.warn("youtubei.js getStreamingData returned no direct URL", {
+          videoId,
+          hasFormat: Boolean(formatAny),
+          hasCipher: Boolean(formatAny?.cipher || formatAny?.signature_cipher),
+          itag: formatAny?.itag,
+          mimeType: formatAny?.mime_type ?? formatAny?.mimeType,
         });
-        return {
-          url: formatAny.url,
-          source: "youtubei",
-          bitrate: formatAny.bitrate,
-        };
-      }
       } catch (e) {
-        // getStreamingData 失敗，繼續嘗試其他方法
+        log.warn("youtubei.js getStreamingData failed", {
+          error: e instanceof Error ? e.message : String(e),
+          errorName: e instanceof Error ? e.name : typeof e,
+          videoId,
+        });
       }
 
       // Fallback: getInfo + chooseFormat
@@ -1757,6 +1799,7 @@ class MusicService {
         if (url && url.length > 0) {
           log.info("Stream URL obtained via chooseFormat", {
             bitrate: format.bitrate,
+            source: "youtubei",
           });
           return {
             url,
@@ -1766,10 +1809,20 @@ class MusicService {
         }
       }
 
+      log.warn("youtubei.js chooseFormat returned no direct URL", {
+        videoId,
+        hasFormat: Boolean(format),
+        hasCipher: Boolean(
+          (format as any)?.cipher || (format as any)?.signature_cipher,
+        ),
+        itag: format?.itag,
+        mimeType: (format as any)?.mime_type ?? (format as any)?.mimeType,
+      });
       throw new Error("No suitable audio stream found");
     } catch (error) {
       log.warn("Primary stream extraction failed, trying yt-dlp CLI fallback", {
         error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
         videoId,
       });
 
@@ -1783,20 +1836,12 @@ class MusicService {
 
   private async getStreamUrlViaYtDlp(url: string): Promise<string> {
     const { stdout } = await this.runYtDlpCommand(getYtDlpCliArgs(url));
-    const urls = stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const streamUrl = urls[urls.length - 1];
-
-    if (!streamUrl) {
-      throw new Error("yt-dlp did not return a playable URL");
-    }
+    const streamUrl = parseYtDlpStreamUrlOutput(stdout);
 
     log.info("Stream URL obtained via yt-dlp CLI", {
+      source: "yt-dlp",
       urlLength: streamUrl.length,
-      lineCount: urls.length,
+      lineCount: stdout.split("\n").filter((line) => line.trim()).length,
     });
 
     return streamUrl;
@@ -1825,13 +1870,46 @@ class MusicService {
 
   private async runYtDlpCommand(
     args: string[],
-  ): Promise<{ stdout: string; stderr: string }> {
-    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(getYtDlpExecutable(), args, {
+  ): Promise<YtDlpCommandResult> {
+    return new Promise<YtDlpCommandResult>((resolve, reject) => {
+      const executable = getYtDlpExecutable();
+      const timeoutMs = getYtDlpCommandTimeoutMs();
+      const child = spawn(executable, args, {
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, timeoutMs);
+
+      const finishWithError = (error: YtDlpCommandError) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+
+        const hint = getYtDlpFailureHint(error.message);
+        if (hint) {
+          error.message = `${error.message} ${hint}`;
+        }
+
+        log.warn("yt-dlp command failed", {
+          executable,
+          args,
+          exitCode: error.details.exitCode,
+          signal: error.details.signal,
+          timedOut: error.details.timedOut,
+          stderr: error.details.stderr,
+          stdout: error.details.stdout,
+          error: error.message,
+        });
+        reject(error);
+      };
 
       child.stdout?.on("data", (data: Buffer) => {
         stdout += data.toString();
@@ -1842,19 +1920,47 @@ class MusicService {
       });
 
       child.on("error", (error) => {
-        reject(error);
+        finishWithError(
+          new YtDlpCommandError(`Failed to start yt-dlp: ${error.message}`, {
+            executable,
+            args,
+            stdout: stdout.trim(),
+            stderr: stderr.trim(),
+            timedOut,
+            cause: error,
+          }),
+        );
       });
 
-      child.on("exit", (code) => {
+      child.on("exit", (code, signal) => {
+        if (settled) {
+          return;
+        }
+        clearTimeout(timeout);
+
         if (code !== 0) {
-          reject(
-            new Error(
-              stderr.trim() || `yt-dlp exited with code ${code ?? "unknown"}`,
-            ),
+          const stderrText = stderr.trim();
+          const stdoutText = stdout.trim();
+          const message = timedOut
+            ? `yt-dlp timed out after ${timeoutMs}ms`
+            : stderrText ||
+              stdoutText ||
+              `yt-dlp exited with code ${code ?? "unknown"}`;
+          finishWithError(
+            new YtDlpCommandError(message, {
+              executable,
+              args,
+              exitCode: code,
+              signal,
+              stdout: stdoutText,
+              stderr: stderrText,
+              timedOut,
+            }),
           );
           return;
         }
 
+        settled = true;
         resolve({
           stdout: stdout.trim(),
           stderr: stderr.trim(),

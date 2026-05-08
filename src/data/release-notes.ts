@@ -1,6 +1,34 @@
 import type { ReleaseNotesEntry } from "../types/index.ts";
 
 const fallbackReleaseNotesByVersion: Record<string, ReleaseNotesEntry> = {
+  "0.7.9": {
+    version: "0.7.9",
+    title: "yt-dlp 播放備援強化",
+    publishedAt: "2026-05-08",
+    status: "preview",
+    summary:
+      "強化 yt-dlp 作為生產播放備援路徑，讓 YouTube 串流解析失敗時更快切換、更容易診斷部署環境。",
+    sections: [
+      {
+        category: "changed",
+        title: "播放備援強化",
+        description: "把 yt-dlp 從最後保底提升為可觀測、可診斷的穩定播放路徑。",
+        items: [
+          "youtubei.js 直接串流失敗時會清楚記錄錯誤類型，並快速切到 yt-dlp 取得可播放 URL。",
+          "yt-dlp fallback 新增 timeout、stderr、exit code 與 URL scheme 驗證，讓生產錯誤更容易定位。",
+        ],
+      },
+      {
+        category: "added",
+        title: "部署診斷資訊",
+        description: "讓部署者能直接確認播放依賴是否真的可用。",
+        items: [
+          "系統資訊 API 新增 mpv 與 yt-dlp runtime 狀態，包含版本、執行檔、extractor args 與 cookies 可讀狀態。",
+          "Docker 部署改用可確認版本的 yt-dlp binary，並保留 cookies 檔掛載範例。",
+        ],
+      },
+    ],
+  },
   "0.7.8": {
     version: "0.7.8",
     title: "音量平衡過度放大修正",
