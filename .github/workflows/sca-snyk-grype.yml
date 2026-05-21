@@ -1,0 +1,34 @@
+name: "02 SCA - Snyk & Grype Standalone"
+on:
+  workflow_dispatch:
+jobs:
+  sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+      - name: Run Snyk Test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk test --json > snyk-report.json || true
+      - name: Install Syft & Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Generate SBOM using Syft
+        run: syft . -o json > sbom.json
+      - name: Scan SBOM using Grype
+        run: grype sbom.json
+      - name: Upload SCA Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-reports
+          path: |
+            snyk-report.json
+            sbom.json

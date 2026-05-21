@@ -1,0 +1,18 @@
+name: "01 SAST - Semgrep Standalone"
+on:
+  workflow_dispatch:
+jobs:
+  semgrep-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run Semgrep CI
+        run: |
+          pip install semgrep
+          semgrep scan --config=auto --json --output=semgrep-report.json
+      - name: Upload Semgrep Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
